@@ -24,6 +24,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load environment variables
 load_dotenv(BASE_DIR / ".env")
 
+
+def _clean_stripe_key(value: str) -> str:
+    """
+    Remove whitespace/newlines from Stripe keys to avoid InvalidHeader errors.
+    Stripe keys never contain whitespace, so stripping is safe.
+    """
+    if not value:
+        return ""
+    return "".join(value.split())
+
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-reve-living-crafted-comforts")
 
@@ -186,14 +196,11 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "products")
 
-STRIPE_SECRET_KEY = (
-    os.getenv("STRIPE_SECRET_KEY")
-    or os.getenv("STRIPE_API_KEY")
-    or os.getenv("STRIPE_SK")
-    or ""
+STRIPE_SECRET_KEY = _clean_stripe_key(
+    os.getenv("STRIPE_SECRET_KEY") or os.getenv("STRIPE_API_KEY") or os.getenv("STRIPE_SK") or ""
 )
 # Publishable key can be served to the frontend via an API endpoint.
-STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
+STRIPE_PUBLISHABLE_KEY = _clean_stripe_key(os.getenv("STRIPE_PUBLISHABLE_KEY", ""))
 PAYPAL_CLIENT_ID = os.getenv("PAYPAL_CLIENT_ID", "")
 PAYPAL_CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET", "")
 PAYPAL_BASE_URL = os.getenv("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com")
