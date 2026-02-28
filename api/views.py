@@ -934,7 +934,10 @@ class PaymentViewSet(viewsets.ViewSet):
     def create_stripe_session(self, request):
         stripe.api_key = settings.STRIPE_SECRET_KEY
         if not stripe.api_key:
-            return Response({"error": "Stripe is not configured"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Stripe is not configured. Please set STRIPE_SECRET_KEY."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         items = request.data.get("items", [])
         line_items = []
@@ -980,7 +983,17 @@ class PaymentViewSet(viewsets.ViewSet):
             )
             return Response({"id": checkout_session.id, "url": checkout_session.url})
         except Exception as exc:  # pragma: no cover - external service
+            # Surface the error to the client so they see why checkout failed
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=["get"])
+    def stripe_config(self, request):
+        """
+        Provide publishable key to the frontend at runtime so it need not live in the frontend .env.
+        """
+        if not settings.STRIPE_PUBLISHABLE_KEY:
+            return Response({"error": "Stripe publishable key not set"}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"publishableKey": settings.STRIPE_PUBLISHABLE_KEY})
 
     @action(detail=False, methods=["post"])
     def create_paypal_order(self, request):
