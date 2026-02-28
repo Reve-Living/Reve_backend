@@ -933,6 +933,9 @@ class PaymentViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"])
     def create_stripe_session(self, request):
         stripe.api_key = settings.STRIPE_SECRET_KEY
+        if not stripe.api_key:
+            return Response({"error": "Stripe is not configured"}, status=status.HTTP_400_BAD_REQUEST)
+
         items = request.data.get("items", [])
         line_items = []
         for item in items:
@@ -960,14 +963,24 @@ class PaymentViewSet(viewsets.ViewSet):
                 }
             )
 
-        checkout_session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            line_items=line_items,
-            mode="payment",
-            success_url=request.data.get("success_url"),
-            cancel_url=request.data.get("cancel_url"),
-        )
-        return Response({"id": checkout_session.id, "url": checkout_session.url})
+        order_id = request.data.get("order_id")
+        metadata = {}
+        if order_id:
+            metadata["order_id"] = str(order_id)
+
+        try:
+            checkout_session = stripe.checkout.Session.create(
+                payment_method_types=["card"],
+                line_items=line_items,
+                mode="payment",
+                success_url=request.data.get("success_url"),
+                cancel_url=request.data.get("cancel_url"),
+                client_reference_id=str(order_id) if order_id else None,
+                metadata=metadata or None,
+            )
+            return Response({"id": checkout_session.id, "url": checkout_session.url})
+        except Exception as exc:  # pragma: no cover - external service
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=["post"])
     def create_paypal_order(self, request):
