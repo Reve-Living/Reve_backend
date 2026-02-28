@@ -953,6 +953,9 @@ class PaymentViewSet(viewsets.ViewSet):
                 }
             )
 
+        if not line_items:
+            return Response({"error": "No line items provided for checkout."}, status=status.HTTP_400_BAD_REQUEST)
+
         delivery_charges = request.data.get("delivery_charges", 0)
         if float(delivery_charges) > 0:
             line_items.append(
@@ -984,7 +987,11 @@ class PaymentViewSet(viewsets.ViewSet):
             return Response({"id": checkout_session.id, "url": checkout_session.url})
         except Exception as exc:  # pragma: no cover - external service
             # Surface the error to the client so they see why checkout failed
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            body = {"error": str(exc)}
+            code = getattr(exc, "code", None)
+            if code:
+                body["code"] = code
+            return Response(body, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=["get"])
     def stripe_config(self, request):
