@@ -7,6 +7,8 @@ from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin
 
 from django.conf import settings
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
 from django.contrib.auth.models import User
 from django.utils.text import slugify
 from django.db.models import Prefetch
@@ -19,8 +21,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
-
-from supabase import create_client
 
 from .models import (
     Category,
@@ -908,25 +908,12 @@ class UploadViewSet(viewsets.ViewSet):
         safe_ext = (ext or "").lower()
         file_name = f"{uuid.uuid4().hex}-{safe_base}{safe_ext}"
 
-        supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
-        bucket = settings.SUPABASE_BUCKET
-        upload_result = supabase.storage.from_(bucket).upload(
-            file_name,
-            file_obj.read(),
-            {"content-type": file_obj.content_type},
-        )
-        if hasattr(upload_result, "error") and upload_result.error:
-            return Response({"error": str(upload_result.error)}, status=status.HTTP_400_BAD_REQUEST)
+        # Save to local media storage (Render disk)
+        saved_path = default_storage.save(file_name, file_obj)
+        relative_url = default_storage.url(saved_path)
+        absolute_url = request.build_absolute_uri(relative_url)
 
-        public_url_raw = supabase.storage.from_(bucket).get_public_url(file_name)
-        public_url = self._extract_public_url(public_url_raw)
-        if not public_url:
-            return Response({"error": "Unable to determine public file URL"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        if public_url.startswith("/"):
-            public_url = urljoin(settings.SUPABASE_URL.rstrip("/") + "/", public_url.lstrip("/"))
-
-        return Response({"url": public_url})
+        return Response({"url": relative_url, "absolute_url": absolute_url})
 
 
 class PaymentViewSet(viewsets.ViewSet):

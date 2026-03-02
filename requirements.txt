@@ -3,8 +3,6 @@ djangorestframework==3.16.1
 djangorestframework-simplejwt==5.5.1
 django-cors-headers==4.7.0
 python-dotenv==1.1.1
-supabase==2.4.0
-gotrue==2.8.1
 httpx==0.25.2
 stripe==12.5.1
 requests==2.32.4
