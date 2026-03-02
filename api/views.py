@@ -913,7 +913,8 @@ class UploadViewSet(viewsets.ViewSet):
         relative_url = default_storage.url(saved_path)
         absolute_url = request.build_absolute_uri(relative_url)
 
-        return Response({"url": relative_url, "absolute_url": absolute_url})
+        # Return absolute URL so frontend stores a fully-qualified backend path
+        return Response({"url": absolute_url, "relative_url": relative_url})
 
 
 class PaymentViewSet(viewsets.ViewSet):
