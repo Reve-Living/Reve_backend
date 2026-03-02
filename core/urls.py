@@ -22,4 +22,7 @@ from django.conf.urls.static import static
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('api.urls')),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+]
+
+# Always serve media files from MEDIA_ROOT at MEDIA_URL (needed on Render)
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
