@@ -318,6 +318,8 @@ class ProductViewSet(viewsets.ModelViewSet):
     - Caches list responses briefly to smooth category page load times.
     """
 
+    # Base queryset needed for DRF router basename resolution
+    queryset = Product.objects.all()
     permission_classes = [IsAdminOrReadOnly]
 
     # Prefetch groups tuned for list vs detail
