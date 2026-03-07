@@ -1078,9 +1078,9 @@ class PaymentViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["post"])
     def create_paypal_order(self, request):
-        access_token = self._paypal_access_token()
+        access_token, auth_error = self._paypal_access_token()
         if not access_token:
-            return Response({"error": "PayPal auth failed"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(auth_error or {"error": "PayPal auth failed"}, status=status.HTTP_400_BAD_REQUEST)
 
         total = request.data.get("total")
         currency = request.data.get("currency", "GBP")
@@ -1111,9 +1111,9 @@ class PaymentViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["post"])
     def capture_paypal_order(self, request):
-        access_token = self._paypal_access_token()
+        access_token, auth_error = self._paypal_access_token()
         if not access_token:
-            return Response({"error": "PayPal auth failed"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(auth_error or {"error": "PayPal auth failed"}, status=status.HTTP_400_BAD_REQUEST)
         order_id = request.data.get("orderID")
         response, error = self._paypal_request(
             "POST",
@@ -1126,7 +1126,8 @@ class PaymentViewSet(viewsets.ViewSet):
 
     def _paypal_access_token(self):
         if not settings.PAYPAL_CLIENT_ID or not settings.PAYPAL_CLIENT_SECRET:
-            return None
+            return None, {"error": "Missing PayPal credentials", "hint": "Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET"}
+
         response, error = self._paypal_request(
             "POST",
             "/v1/oauth2/token",
@@ -1135,8 +1136,8 @@ class PaymentViewSet(viewsets.ViewSet):
             data={"grant_type": "client_credentials"},
         )
         if error:
-            return None
-        return response.json().get("access_token")
+            return None, error
+        return response.json().get("access_token"), None
 
 
 class FilterTypeViewSet(viewsets.ModelViewSet):
