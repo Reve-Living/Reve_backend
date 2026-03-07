@@ -311,22 +311,36 @@ class HeroSlideViewSet(viewsets.ModelViewSet):
 
 
 class ProductViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.all().select_related("category", "subcategory").prefetch_related(
+    """
+    Product listing/detail.
+    - Uses a lightweight queryset for list responses to cut payload size & query count.
+    - Falls back to a fully-prefetched queryset for detail/admin mutations.
+    - Caches list responses briefly to smooth category page load times.
+    """
+
+    permission_classes = [IsAdminOrReadOnly]
+
+    # Prefetch groups tuned for list vs detail
+    _list_prefetches = [
         "images",
-        "videos",
-        "colors",
         "sizes",
-        "styles",
-        "fabrics",
-        "mattresses",
         Prefetch(
             "filter_values",
             queryset=ProductFilterValue.objects.select_related("filter_option__filter_type"),
             to_attr="filter_values_all",
         ),
+    ]
+    _detail_prefetches = _list_prefetches + [
+        "videos",
+        "colors",
+        "styles",
+        "fabrics",
+        "mattresses",
         "dimension_template_link__template__rows",
-    ).order_by("sort_order", "-created_at")
-    permission_classes = [IsAdminOrReadOnly]
+    ]
+
+    def _base_queryset(self):
+        return Product.objects.select_related("category", "subcategory")
 
     def get_serializer_class(self):
         if self.action == "list" and not self.request.query_params.get("slug"):
@@ -337,7 +351,11 @@ class ProductViewSet(viewsets.ModelViewSet):
         return ProductSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        # Choose a lighter prefetch set for list views (most traffic)
+        is_list = self.action == "list" and not self.request.query_params.get("slug")
+        prefetches = self._list_prefetches if is_list else self._detail_prefetches
+        queryset = self._base_queryset().prefetch_related(*prefetches)
+
         category = self.request.query_params.get("category")
         subcategory = self.request.query_params.get("subcategory")
         bestseller = self.request.query_params.get("bestseller")
@@ -366,7 +384,21 @@ class ProductViewSet(viewsets.ModelViewSet):
                     filter_values__filter_option__filter_type=ft
                 ).distinct()
         
-        return queryset
+        return queryset.order_by("sort_order", "-created_at")
+
+    def _invalidate_cache(self):
+        """Drop cached product lists after admin changes."""
+        from django.core.cache import cache
+
+        cache.clear()
+
+    @method_decorator(cache_page(60 * 2))
+    def list(self, request, *args, **kwargs):
+        """
+        Cache list responses per-querystring for 2 minutes.
+        Dramatically reduces repeated category page latency.
+        """
+        return super().list(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         data = request.data.copy()
@@ -392,6 +424,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         self._handle_filter_values(product, filter_values)
         self._handle_dimension_template(product, dimension_template_obj)
 
+        self._invalidate_cache()
         return Response(ProductSerializer(product).data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
@@ -445,6 +478,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         self._handle_dimension_template(product, dimension_template_obj)
 
+        self._invalidate_cache()
         return Response(ProductSerializer(product).data)
 
     def _handle_related_data(self, product, images, videos, colors, sizes, styles, fabrics, mattresses):
@@ -1105,6 +1139,7 @@ class CategoryFiltersView(generics.GenericAPIView):
     """
     permission_classes = [AllowAny]
     
+    @method_decorator(cache_page(60 * 2))
     def get(self, request, category_slug):
         from django.db.models import Q, Count
         
@@ -1142,16 +1177,20 @@ class CategoryFiltersView(generics.GenericAPIView):
             if ft.is_active and ft.id not in seen_ids:
                 filter_types.append(ft)
                 seen_ids.add(ft.id)
+
+        # Precompute product counts in one query (vs per-option loop)
+        base_filter_qs = ProductFilterValue.objects.filter(
+            product__category=category,
+            product__in_stock=True,
+            **({"product__subcategory": subcategory} if subcategory else {}),
+        )
+        option_counts = base_filter_qs.values("filter_option").annotate(product_count=Count("product", distinct=True))
+        count_lookup = {row["filter_option"]: row["product_count"] for row in option_counts}
         
-        # Annotate with product counts for each option
+        # Attach counts without extra queries
         for ft in filter_types:
             for option in ft.options.filter(is_active=True):
-                option.product_count = ProductFilterValue.objects.filter(
-                    filter_option=option,
-                    product__category=category,
-                    **({"product__subcategory": subcategory} if subcategory else {}),
-                    product__in_stock=True
-                ).values('product').distinct().count()
+                option.product_count = count_lookup.get(option.id, 0)
         
         serializer = FilterTypeSerializer(filter_types, many=True)
         return Response({'filters': serializer.data})
