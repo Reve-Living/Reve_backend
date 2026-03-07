@@ -62,6 +62,7 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'api.middleware.EnsureCORSHeadersMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'django.middleware.gzip.GZipMiddleware',  # compress large JSON/image responses
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -163,6 +164,15 @@ MEDIA_ROOT = '/var/media'
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# In-memory cache used by cache_page decorators to speed list endpoints.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "reve-backend-cache",
+        "TIMEOUT": None,  # per-view cache_page controls TTL
+    }
+}
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
