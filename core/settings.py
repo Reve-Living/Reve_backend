@@ -212,7 +212,9 @@ STRIPE_SECRET_KEY = _clean_stripe_key(
 STRIPE_PUBLISHABLE_KEY = _clean_stripe_key(os.getenv("STRIPE_PUBLISHABLE_KEY", ""))
 PAYPAL_CLIENT_ID = os.getenv("PAYPAL_CLIENT_ID", "")
 PAYPAL_CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET", "")
-PAYPAL_BASE_URL = os.getenv("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com")
+PAYPAL_BASE_URL = os.getenv("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com").rstrip("/")
+PAYPAL_TIMEOUT = float(os.getenv("PAYPAL_TIMEOUT", "15"))
+PAYPAL_CONNECT_TIMEOUT = float(os.getenv("PAYPAL_CONNECT_TIMEOUT", "5"))
 
 # Prevent oversized JSON/product payloads from exhausting worker memory.
 DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv("DATA_UPLOAD_MAX_MEMORY_SIZE", "3145728"))  # 3 MB

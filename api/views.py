@@ -2,6 +2,7 @@ import uuid
 import os
 import stripe
 import requests
+from requests.adapters import HTTPAdapter, Retry
 import re
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin
@@ -960,6 +961,49 @@ class UploadViewSet(viewsets.ViewSet):
 
 
 class PaymentViewSet(viewsets.ViewSet):
+    def _paypal_session(self):
+        # Shared session with retry/backoff to reduce transient PayPal failures
+        if hasattr(self, "_paypal_cached_session"):
+            return self._paypal_cached_session
+
+        retries = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[500, 502, 503, 504],
+            allowed_methods=["GET", "POST"],
+        )
+        adapter = HTTPAdapter(max_retries=retries)
+        session = requests.Session()
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        self._paypal_cached_session = session
+        return session
+
+    def _paypal_request(self, method: str, path: str, **kwargs):
+        # Apply sane defaults and user-friendly error messages
+        timeout = kwargs.pop(
+            "timeout",
+            (
+                getattr(settings, "PAYPAL_CONNECT_TIMEOUT", 5),
+                getattr(settings, "PAYPAL_TIMEOUT", 15),
+            ),
+        )
+        url = f"{settings.PAYPAL_BASE_URL}{path}"
+        try:
+            resp = self._paypal_session().request(method, url, timeout=timeout, **kwargs)
+        except requests.Timeout:
+            return None, {"error": "PayPal timed out. Please try again in a moment."}
+        except requests.RequestException as exc:
+            return None, {"error": f"PayPal request failed: {exc}"}
+
+        if resp.status_code >= 400:
+            return None, {
+                "error": "PayPal returned an error",
+                "status": resp.status_code,
+                "body": resp.text,
+            }
+        return resp, None
+
     @action(detail=False, methods=["post"])
     def create_stripe_session(self, request):
         stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -1055,14 +1099,14 @@ class PaymentViewSet(viewsets.ViewSet):
         if return_url and cancel_url:
             payload["application_context"] = {"return_url": return_url, "cancel_url": cancel_url}
 
-        response = requests.post(
-            f"{settings.PAYPAL_BASE_URL}/v2/checkout/orders",
+        response, error = self._paypal_request(
+            "POST",
+            "/v2/checkout/orders",
             headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
             json=payload,
-            timeout=30,
         )
-        if response.status_code >= 400:
-            return Response({"error": response.text}, status=status.HTTP_400_BAD_REQUEST)
+        if error:
+            return Response(error, status=status.HTTP_400_BAD_REQUEST)
         return Response(response.json())
 
     @action(detail=False, methods=["post"])
@@ -1071,24 +1115,26 @@ class PaymentViewSet(viewsets.ViewSet):
         if not access_token:
             return Response({"error": "PayPal auth failed"}, status=status.HTTP_400_BAD_REQUEST)
         order_id = request.data.get("orderID")
-        response = requests.post(
-            f"{settings.PAYPAL_BASE_URL}/v2/checkout/orders/{order_id}/capture",
+        response, error = self._paypal_request(
+            "POST",
+            f"/v2/checkout/orders/{order_id}/capture",
             headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
-            timeout=30,
         )
-        if response.status_code >= 400:
-            return Response({"error": response.text}, status=status.HTTP_400_BAD_REQUEST)
+        if error:
+            return Response(error, status=status.HTTP_400_BAD_REQUEST)
         return Response(response.json())
 
     def _paypal_access_token(self):
-        response = requests.post(
-            f"{settings.PAYPAL_BASE_URL}/v1/oauth2/token",
+        if not settings.PAYPAL_CLIENT_ID or not settings.PAYPAL_CLIENT_SECRET:
+            return None
+        response, error = self._paypal_request(
+            "POST",
+            "/v1/oauth2/token",
             auth=(settings.PAYPAL_CLIENT_ID, settings.PAYPAL_CLIENT_SECRET),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             data={"grant_type": "client_credentials"},
-            timeout=30,
         )
-        if response.status_code >= 400:
+        if error:
             return None
         return response.json().get("access_token")
 
