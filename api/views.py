@@ -816,9 +816,15 @@ class OrderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def mark_paid(self, request, pk=None):
         order = self.get_object()
+        payment_method = request.data.get("payment_method")
+        payment_id = request.data.get("payment_id")
+        if payment_method:
+            order.payment_method = payment_method
+        if payment_id:
+            order.payment_id = payment_id
         order.status = "paid"
         order.save()
-        return Response({"status": "order marked as paid"})
+        return Response({"status": "order marked as paid", "payment_method": order.payment_method, "payment_id": order.payment_id})
 
     @action(detail=True, methods=["post"])
     def mark_shipped(self, request, pk=None):
@@ -1036,9 +1042,15 @@ class PaymentViewSet(viewsets.ViewSet):
         currency = request.data.get("currency", "GBP")
         return_url = request.data.get("return_url")
         cancel_url = request.data.get("cancel_url")
+        order_id = request.data.get("order_id")
         payload = {
             "intent": "CAPTURE",
-            "purchase_units": [{"amount": {"currency_code": currency, "value": str(total)}}],
+            "purchase_units": [
+                {
+                    "amount": {"currency_code": currency, "value": str(total)},
+                    "custom_id": str(order_id) if order_id else None,
+                }
+            ],
         }
         if return_url and cancel_url:
             payload["application_context"] = {"return_url": return_url, "cancel_url": cancel_url}
