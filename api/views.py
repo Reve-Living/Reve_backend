@@ -34,6 +34,8 @@ from .models import (
     ProductStyle,
     ProductFabric,
     ProductMattress,
+    MattressOption,
+    MattressOptionPrice,
     Order,
     OrderItem,
     Review,
@@ -61,6 +63,7 @@ from .serializers import (
     CategoryFilterSerializer,
     ProductFilterValueSerializer,
     ProductStyleLibrarySerializer,
+    MattressOptionSerializer,
 )
 
 
@@ -771,6 +774,75 @@ class ProductViewSet(viewsets.ModelViewSet):
         link, _ = ProductDimensionTemplate.objects.get_or_create(product=product)
         link.template = dimension_template_obj
         link.save()
+
+
+class MattressOptionViewSet(viewsets.ModelViewSet):
+    """
+    Admin-defined global mattress options with per-size pricing.
+    Public GET is allowed; write requires admin.
+    """
+
+    queryset = MattressOption.objects.all().prefetch_related("prices").order_by("sort_order", "name")
+    serializer_class = MattressOptionSerializer
+    permission_classes = [IsAdminOrReadOnly]
+    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
+
+    def _clean_prices(self, prices_raw):
+        cleaned = []
+        for p in prices_raw or []:
+            if not isinstance(p, dict):
+                continue
+            size_label = str(p.get("size_label", "")).strip()
+            if not size_label:
+                continue
+
+            def _clean_decimal(val):
+                if val in (None, "", "null"):
+                    return None
+                try:
+                    return Decimal(val)
+                except (InvalidOperation, TypeError):
+                    raise ValidationError({"prices": [f"Invalid price value for size '{size_label}'."]})
+
+            cleaned.append(
+                {
+                    "size_label": size_label,
+                    "price": _clean_decimal(p.get("price")),
+                    "original_price": _clean_decimal(p.get("original_price")),
+                    "price_top": _clean_decimal(p.get("price_top")),
+                    "price_bottom": _clean_decimal(p.get("price_bottom")),
+                    "price_both": _clean_decimal(p.get("price_both")),
+                }
+            )
+        return cleaned
+
+    def _upsert_prices(self, option, prices):
+        option.prices.all().delete()
+        for p in prices:
+            MattressOptionPrice.objects.create(option=option, **p)
+
+    def create(self, request, *args, **kwargs):
+        data = request.data.copy()
+        prices_raw = data.pop("prices", [])
+        prices = self._clean_prices(prices_raw)
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        option = serializer.save()
+        self._upsert_prices(option, prices)
+        return Response(self.get_serializer(option).data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        data = request.data.copy()
+        prices_raw = data.pop("prices", None)
+        prices = self._clean_prices(prices_raw) if prices_raw is not None else None
+        serializer = self.get_serializer(instance, data=data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        option = serializer.save()
+        if prices is not None:
+            self._upsert_prices(option, prices)
+        return Response(self.get_serializer(option).data)
 
 
 class OrderViewSet(viewsets.ModelViewSet):

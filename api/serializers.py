@@ -12,6 +12,8 @@ from .models import (
     ProductStyle,
     ProductFabric,
     ProductMattress,
+    MattressOption,
+    MattressOptionPrice,
     Order,
     OrderItem,
     Review,
@@ -125,6 +127,34 @@ class ProductFabricSerializer(serializers.ModelSerializer):
         fields = ("id", "name", "image_url", "is_shared", "colors")
 
 
+class MattressOptionPriceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MattressOptionPrice
+        fields = ("id", "size_label", "price", "original_price", "price_top", "price_bottom", "price_both")
+
+
+class MattressOptionSerializer(serializers.ModelSerializer):
+    prices = MattressOptionPriceSerializer(many=True, required=False)
+
+    class Meta:
+        model = MattressOption
+        fields = (
+            "id",
+            "name",
+            "description",
+            "image_url",
+            "price",
+            "original_price",
+            "enable_bunk_positions",
+            "price_top",
+            "price_bottom",
+            "price_both",
+            "is_active",
+            "sort_order",
+            "prices",
+        )
+
+
 class ProductMattressSerializer(serializers.ModelSerializer):
     source_product_name = serializers.CharField(source="source_product.name", read_only=True)
     source_product_slug = serializers.CharField(source="source_product.slug", read_only=True)
@@ -168,7 +198,7 @@ class ProductSerializer(serializers.ModelSerializer):
     sizes = ProductSizeSerializer(many=True, read_only=True)
     styles = ProductStyleSerializer(many=True, read_only=True)
     fabrics = ProductFabricSerializer(many=True, read_only=True)
-    mattresses = ProductMattressSerializer(many=True, read_only=True)
+    mattresses = serializers.SerializerMethodField()
     filters = serializers.SerializerMethodField()
     computed_dimensions = serializers.SerializerMethodField()
     wingback_width_delta_cm = serializers.SerializerMethodField()
@@ -231,6 +261,13 @@ class ProductSerializer(serializers.ModelSerializer):
             "category_slug",
             "subcategory_slug",
         )
+
+    def get_mattresses(self, obj):
+        """
+        Return global mattress options so every bed shows the same admin-defined set.
+        """
+        options = MattressOption.objects.filter(is_active=True).prefetch_related("prices")
+        return MattressOptionSerializer(options, many=True).data
 
     def get_filters(self, obj):
         # use prefetched data when available to avoid N+1

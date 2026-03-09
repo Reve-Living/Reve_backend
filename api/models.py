@@ -157,6 +157,53 @@ class ProductFabric(models.Model):
         ordering = ["id"]
 
 
+class MattressOption(models.Model):
+    """
+    Global mattress catalogue defined in admin (separate from mattress product category).
+    Shared across all beds; per-size pricing stored in MattressOptionPrice.
+    """
+
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    image_url = models.URLField(max_length=1000, blank=True)
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    original_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    enable_bunk_positions = models.BooleanField(default=False)
+    price_top = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    price_bottom = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    price_both = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    sort_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+
+    def __str__(self):
+        return self.name
+
+
+class MattressOptionPrice(models.Model):
+    """
+    Size-specific pricing overrides for a MattressOption.
+    """
+
+    option = models.ForeignKey(MattressOption, related_name="prices", on_delete=models.CASCADE)
+    size_label = models.CharField(max_length=120)
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    original_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    price_top = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    price_bottom = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    price_both = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.option.name} - {self.size_label}"
+
+
 class ProductMattress(models.Model):
     product = models.ForeignKey(Product, related_name="mattresses", on_delete=models.CASCADE)
     # Optional link to an existing product this mattress is based on (for reuse / import)

@@ -21,6 +21,7 @@ from .views import (
     CategoryFilterViewSet,
     CategoryFiltersView,
     AdminSummaryView,
+    MattressOptionViewSet,
 )
 
 router = DefaultRouter()
@@ -38,6 +39,7 @@ router.register(r"filter-options", FilterOptionViewSet)
 router.register(r"dimension-templates", DimensionTemplateViewSet)
 router.register(r"style-groups", ProductStyleLibraryViewSet, basename="style-groups")
 router.register(r"category-filters", CategoryFilterViewSet)
+router.register(r"mattress-options", MattressOptionViewSet)
 
 urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="health"),
