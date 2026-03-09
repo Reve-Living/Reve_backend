@@ -826,6 +826,16 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
                 continue
         return cleaned
 
+    def _clean_subcategories(self, subcategories_raw):
+        cleaned = []
+        for sid in subcategories_raw or []:
+            try:
+                sub = SubCategory.objects.get(id=sid)
+                cleaned.append(sub)
+            except SubCategory.DoesNotExist:
+                continue
+        return cleaned
+
     def _upsert_prices(self, option, prices):
         option.prices.all().delete()
         for p in prices:
@@ -835,14 +845,18 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
         data = request.data.copy()
         prices_raw = data.pop("prices", [])
         categories_raw = data.pop("categories", [])
+        subcategories_raw = data.pop("subcategories", [])
         prices = self._clean_prices(prices_raw)
         categories = self._clean_categories(categories_raw)
+        subcategories = self._clean_subcategories(subcategories_raw)
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
         option = serializer.save()
         self._upsert_prices(option, prices)
         if categories is not None:
             option.categories.set(categories)
+        if subcategories is not None:
+            option.subcategories.set(subcategories)
         return Response(self.get_serializer(option).data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
@@ -851,8 +865,10 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
         data = request.data.copy()
         prices_raw = data.pop("prices", None)
         categories_raw = data.pop("categories", None)
+        subcategories_raw = data.pop("subcategories", None)
         prices = self._clean_prices(prices_raw) if prices_raw is not None else None
         categories = self._clean_categories(categories_raw) if categories_raw is not None else None
+        subcategories = self._clean_subcategories(subcategories_raw) if subcategories_raw is not None else None
         serializer = self.get_serializer(instance, data=data, partial=partial)
         serializer.is_valid(raise_exception=True)
         option = serializer.save()
@@ -860,6 +876,8 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
             self._upsert_prices(option, prices)
         if categories is not None:
             option.categories.set(categories)
+        if subcategories is not None:
+            option.subcategories.set(subcategories)
         return Response(self.get_serializer(option).data)
 
 
