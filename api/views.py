@@ -816,6 +816,16 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
             )
         return cleaned
 
+    def _clean_categories(self, categories_raw):
+        cleaned = []
+        for cid in categories_raw or []:
+            try:
+                cat = Category.objects.get(id=cid)
+                cleaned.append(cat)
+            except Category.DoesNotExist:
+                continue
+        return cleaned
+
     def _upsert_prices(self, option, prices):
         option.prices.all().delete()
         for p in prices:
@@ -824,11 +834,15 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         data = request.data.copy()
         prices_raw = data.pop("prices", [])
+        categories_raw = data.pop("categories", [])
         prices = self._clean_prices(prices_raw)
+        categories = self._clean_categories(categories_raw)
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
         option = serializer.save()
         self._upsert_prices(option, prices)
+        if categories is not None:
+            option.categories.set(categories)
         return Response(self.get_serializer(option).data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
@@ -836,12 +850,16 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         data = request.data.copy()
         prices_raw = data.pop("prices", None)
+        categories_raw = data.pop("categories", None)
         prices = self._clean_prices(prices_raw) if prices_raw is not None else None
+        categories = self._clean_categories(categories_raw) if categories_raw is not None else None
         serializer = self.get_serializer(instance, data=data, partial=partial)
         serializer.is_valid(raise_exception=True)
         option = serializer.save()
         if prices is not None:
             self._upsert_prices(option, prices)
+        if categories is not None:
+            option.categories.set(categories)
         return Response(self.get_serializer(option).data)
 
 

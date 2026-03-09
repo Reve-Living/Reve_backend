@@ -135,6 +135,9 @@ class MattressOptionPriceSerializer(serializers.ModelSerializer):
 
 class MattressOptionSerializer(serializers.ModelSerializer):
     prices = MattressOptionPriceSerializer(many=True, required=False)
+    categories = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Category.objects.all(), required=False, allow_null=True
+    )
 
     class Meta:
         model = MattressOption
@@ -149,6 +152,7 @@ class MattressOptionSerializer(serializers.ModelSerializer):
             "price_top",
             "price_bottom",
             "price_both",
+            "categories",
             "is_active",
             "sort_order",
             "prices",
