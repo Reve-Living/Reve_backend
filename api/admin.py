@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.utils.html import format_html
 from .models import (
     Category,
     SubCategory,
@@ -91,9 +92,42 @@ class OrderAdmin(admin.ModelAdmin):
     list_display = ("id", "email", "total_amount", "status", "payment_method", "created_at")
     list_filter = ("status", "payment_method")
     inlines = [OrderItemInline]
+    readonly_fields = ("special_notes", "reference_images_preview", "created_at")
+    fieldsets = (
+        (None, {
+            "fields": (
+                "user",
+                ("first_name", "last_name"),
+                ("email", "phone"),
+                "address",
+                ("city", "postal_code"),
+            )
+        }),
+        ("Payment & Status", {
+            "fields": (
+                ("total_amount", "delivery_charges"),
+                ("status", "payment_method", "payment_id"),
+                "created_at",
+            )
+        }),
+        ("Customer Notes", {
+            "fields": ("special_notes", "reference_images_preview")
+        }),
+    )
 
+    def reference_images_preview(self, obj):
+        if not obj.reference_images:
+            return "-"
+        thumbs = "".join(
+            f'<img src="{url}" style="height:80px;width:80px;object-fit:cover;margin:4px;border:1px solid #ddd;border-radius:4px;" />'
+            for url in obj.reference_images
+        )
+        return format_html(thumbs)
+
+    reference_images_preview.short_description = "Reference Images"
 
 @admin.register(Review)
+
 class ReviewAdmin(admin.ModelAdmin):
     list_display = ("product", "name", "rating", "is_visible", "created_by", "created_at")
     list_filter = ("is_visible", "rating")
