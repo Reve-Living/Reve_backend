@@ -47,6 +47,22 @@ def _build_variant_lines(selected_variants: dict) -> list[str]:
     return lines
 
 
+def _dimension_detail_lines(raw_details: str) -> list[str]:
+    return [part.strip() for part in (raw_details or "").split("|") if part.strip()]
+
+
+def _recipient_intro(order: Order, recipient_label: str, is_admin: bool) -> tuple[str, str]:
+    if is_admin:
+        return (
+            f"Hey {recipient_label}!",
+            f"A new order has just been placed by {order.first_name} {order.last_name}.",
+        )
+    return (
+        f"Hey {recipient_label}!",
+        f"Your order is confirmed. We have received your order and our team will process it shortly.",
+    )
+
+
 def _order_items_text(order: Order) -> str:
     blocks: list[str] = []
     for idx, item in enumerate(order.items.select_related("product").all(), start=1):
@@ -64,8 +80,8 @@ def _order_items_text(order: Order) -> str:
             lines.append(f"   Style: {item.style}")
         if item.dimension:
             lines.append(f"   Dimension: {item.dimension}")
-        if item.dimension_details:
-            lines.append(f"   Dimension details: {item.dimension_details}")
+        for dimension_line in _dimension_detail_lines(item.dimension_details):
+            lines.append(f"   {dimension_line}")
         if item.extras_total:
             lines.append(f"   Extras total: {_format_money(item.extras_total)}")
         lines.append(f"   Include dimension: {'Yes' if item.include_dimension else 'No'}")
@@ -90,8 +106,6 @@ def _order_items_html(order: Order) -> str:
             rows.append(("Style", item.style))
         if item.dimension:
             rows.append(("Dimension", item.dimension))
-        if item.dimension_details:
-            rows.append(("Dimension details", item.dimension_details))
         if item.extras_total:
             rows.append(("Extras total", _format_money(item.extras_total)))
         rows.append(("Include dimension", "Yes" if item.include_dimension else "No"))
@@ -104,11 +118,23 @@ def _order_items_html(order: Order) -> str:
             f"<td style='padding:6px 0; vertical-align:top;'>{escape(str(value))}</td></tr>"
             for label, value in rows
         )
+        dimension_list = "".join(
+            f"<li style='margin:0 0 6px;'>{escape(line)}</li>" for line in _dimension_detail_lines(item.dimension_details)
+        )
+        dimension_block = (
+            "<div style='margin-top:12px;'>"
+            "<p style='margin:0 0 8px; font-size:13px; font-weight:700;'>Dimensions</p>"
+            f"<ul style='margin:0; padding-left:18px; font-size:14px;'>{dimension_list}</ul>"
+            "</div>"
+            if dimension_list
+            else ""
+        )
         product_name = item.product.name if item.product else f"Product #{item.product_id or 'Unknown'}"
         cards.append(
             "<div style='margin:0 0 18px; padding:16px; border:1px solid #e7e3dd; border-radius:12px;'>"
             f"<p style='margin:0 0 10px; font-size:16px; font-weight:700;'>{idx}. {escape(product_name)}</p>"
             f"<table style='width:100%; border-collapse:collapse; font-size:14px;'>{rendered_rows}</table>"
+            f"{dimension_block}"
             "</div>"
         )
     return "".join(cards) or "<p>No items found.</p>"
@@ -118,12 +144,13 @@ def _message_subject(order: Order) -> str:
     return f"Order ORD-{order.id} confirmation"
 
 
-def _message_text(order: Order, recipient_label: str) -> str:
+def _message_text(order: Order, recipient_label: str, is_admin: bool) -> str:
+    greeting, intro = _recipient_intro(order, recipient_label, is_admin)
     payment_id = order.payment_id or "Not available yet"
     reference_images_count = len(order.reference_images or [])
     return (
-        f"Hello {recipient_label},\n\n"
-        f"A new order has been placed on REVE Living.\n\n"
+        f"{greeting}\n\n"
+        f"{intro}\n\n"
         f"Order number: ORD-{order.id}\n"
         f"Created at: {order.created_at:%Y-%m-%d %H:%M:%S} UTC\n"
         f"Status: {order.status}\n"
@@ -138,22 +165,24 @@ def _message_text(order: Order, recipient_label: str) -> str:
         f"Address: {order.address}\n"
         f"City: {order.city}\n"
         f"Postal code: {order.postal_code}\n\n"
+        f"Order notes\n"
         f"Special notes: {order.special_notes or 'None'}\n"
         f"Reference images attached: {reference_images_count}\n\n"
-        f"Items\n"
+        f"Items ordered\n"
         f"{_order_items_text(order)}\n\n"
         "Thank you,\nREVE Living"
     )
 
 
-def _message_html(order: Order, recipient_label: str) -> str:
+def _message_html(order: Order, recipient_label: str, is_admin: bool) -> str:
+    greeting, intro = _recipient_intro(order, recipient_label, is_admin)
     payment_id = order.payment_id or "Not available yet"
     reference_images_count = len(order.reference_images or [])
     return f"""
     <div style="font-family:Arial,Helvetica,sans-serif; color:#2f241c; line-height:1.5;">
       <h2 style="margin:0 0 16px;">Order ORD-{order.id} confirmation</h2>
-      <p style="margin:0 0 16px;">Hello {escape(recipient_label)},</p>
-      <p style="margin:0 0 20px;">A new order has been placed on REVE Living.</p>
+      <p style="margin:0 0 8px; font-size:18px; font-weight:700;">{escape(greeting)}</p>
+      <p style="margin:0 0 20px;">{escape(intro)}</p>
 
       <div style="margin:0 0 20px; padding:16px; border:1px solid #e7e3dd; border-radius:12px; background:#fbf9f6;">
         <p style="margin:0 0 8px;"><strong>Created at:</strong> {order.created_at:%Y-%m-%d %H:%M:%S} UTC</p>
@@ -174,13 +203,13 @@ def _message_html(order: Order, recipient_label: str) -> str:
         <p style="margin:0;"><strong>Postal code:</strong> {escape(order.postal_code)}</p>
       </div>
 
-      <h3 style="margin:0 0 12px;">Customer notes</h3>
+      <h3 style="margin:0 0 12px;">Order notes</h3>
       <div style="margin:0 0 20px; padding:16px; border:1px solid #e7e3dd; border-radius:12px;">
         <p style="margin:0 0 10px;"><strong>Special notes:</strong> {escape(order.special_notes or "None")}</p>
         <p style="margin:0;"><strong>Reference images attached:</strong> {reference_images_count}</p>
       </div>
 
-      <h3 style="margin:0 0 12px;">Items</h3>
+      <h3 style="margin:0 0 12px;">Items ordered</h3>
       {_order_items_html(order)}
 
       <p style="margin:24px 0 0;">Thank you,<br />REVE Living</p>
@@ -207,10 +236,10 @@ def _reference_image_attachments(reference_images: Iterable[str]) -> list[tuple[
     return attachments
 
 
-def _send_email(to_email: str, order: Order, recipient_label: str) -> None:
+def _send_email(to_email: str, order: Order, recipient_label: str, is_admin: bool) -> None:
     subject = _message_subject(order)
-    text_body = _message_text(order, recipient_label)
-    html_body = _message_html(order, recipient_label)
+    text_body = _message_text(order, recipient_label, is_admin)
+    html_body = _message_html(order, recipient_label, is_admin)
 
     email = EmailMultiAlternatives(
         subject=subject,
@@ -230,13 +259,13 @@ def send_order_confirmation_emails(order_id: int) -> None:
         return
 
     order = Order.objects.prefetch_related("items__product").get(pk=order_id)
-    recipients = [(order.email, order.first_name or "Customer")]
+    recipients = [(order.email, order.first_name or "Customer", False)]
     admin_email = getattr(settings, "ORDER_NOTIFICATION_EMAIL", "") or getattr(settings, "DEFAULT_FROM_EMAIL", "")
     if admin_email and admin_email.lower() != (order.email or "").lower():
-        recipients.append((admin_email, "Team"))
+        recipients.append((admin_email, "Team", True))
 
-    for to_email, label in recipients:
+    for to_email, label, is_admin in recipients:
         try:
-            _send_email(to_email, order, label)
+            _send_email(to_email, order, label, is_admin)
         except Exception:
             logger.exception("Failed to send order confirmation email for order %s to %s", order_id, to_email)
