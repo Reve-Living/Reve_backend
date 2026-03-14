@@ -8,11 +8,12 @@ from typing import Iterable
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 
-from .models import Order
+from .models import Order, ProductStyle
 
 logger = logging.getLogger(__name__)
 
 DATA_URL_RE = re.compile(r"^data:(?P<mime>[^;]+);base64,(?P<data>.+)$")
+STYLE_OPTION_KEY_RE = re.compile(r"^(?P<style_id>\d+)-(?P<option_index>\d+)$")
 
 
 def _format_money(value) -> str:
@@ -26,6 +27,46 @@ def _humanize_key(key: str) -> str:
     return key.replace("_", " ").strip().title()
 
 
+def _resolve_variant_value(raw_value, cache: dict[str, str] | None = None) -> str:
+    value = str(raw_value).strip()
+    if not value:
+        return value
+    if cache is not None and value in cache:
+        return cache[value]
+
+    match = STYLE_OPTION_KEY_RE.match(value)
+    if not match:
+        if cache is not None:
+            cache[value] = value
+        return value
+
+    try:
+        style = ProductStyle.objects.get(pk=int(match.group("style_id")))
+    except ProductStyle.DoesNotExist:
+        if cache is not None:
+            cache[value] = value
+        return value
+
+    options = style.options or []
+    try:
+        option = options[int(match.group("option_index"))]
+    except (IndexError, ValueError, TypeError):
+        if cache is not None:
+            cache[value] = value
+        return value
+
+    label = (
+        option.get("label")
+        or option.get("name")
+        or option.get("title")
+        or value
+    )
+    label = str(label).strip() or value
+    if cache is not None:
+        cache[value] = label
+    return label
+
+
 def _payment_label(method: str) -> str:
     return {
         "cod": "Cash on Delivery",
@@ -35,14 +76,15 @@ def _payment_label(method: str) -> str:
 
 
 def _build_variant_lines(selected_variants: dict) -> list[str]:
+    value_cache: dict[str, str] = {}
     lines: list[str] = []
     for key, value in (selected_variants or {}).items():
         if value in (None, "", [], {}):
             continue
         if isinstance(value, list):
-            rendered = ", ".join(str(v) for v in value)
+            rendered = ", ".join(_resolve_variant_value(v, value_cache) for v in value)
         else:
-            rendered = str(value)
+            rendered = _resolve_variant_value(value, value_cache)
         lines.append(f"{_humanize_key(str(key))}: {rendered}")
     return lines
 
@@ -56,9 +98,14 @@ def _sanitize_style_value(style: str, selected_variants: dict, dimension_details
         return ""
 
     dimension_lines = {line.lower() for line in _dimension_detail_lines(dimension_details)}
-    explicit_variant_values = {str(value).strip().lower() for value in (selected_variants or {}).values() if value}
+    value_cache: dict[str, str] = {}
+    explicit_variant_values = {
+        _resolve_variant_value(value, value_cache).strip().lower()
+        for value in (selected_variants or {}).values()
+        if value not in (None, "", [], {})
+    }
     explicit_variant_pairs = {
-        f"{_humanize_key(str(key))}: {value}".strip().lower()
+        f"{_humanize_key(str(key))}: {_resolve_variant_value(value, value_cache)}".strip().lower()
         for key, value in (selected_variants or {}).items()
         if value not in (None, "", [], {})
     }
