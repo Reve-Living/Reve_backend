@@ -51,6 +51,44 @@ def _dimension_detail_lines(raw_details: str) -> list[str]:
     return [part.strip() for part in (raw_details or "").split("|") if part.strip()]
 
 
+def _sanitize_style_value(style: str, selected_variants: dict, dimension_details: str) -> str:
+    if not style:
+        return ""
+
+    dimension_lines = {line.lower() for line in _dimension_detail_lines(dimension_details)}
+    explicit_variant_values = {str(value).strip().lower() for value in (selected_variants or {}).values() if value}
+    explicit_variant_pairs = {
+        f"{_humanize_key(str(key))}: {value}".strip().lower()
+        for key, value in (selected_variants or {}).items()
+        if value not in (None, "", [], {})
+    }
+
+    cleaned_parts: list[str] = []
+    seen: set[str] = set()
+    for raw_part in style.split("|"):
+        part = raw_part.strip()
+        if not part:
+            continue
+        lower_part = part.lower()
+        if lower_part in dimension_lines:
+            continue
+        if any(
+            lower_part.startswith(prefix)
+            for prefix in ("length:", "width:", "bed height:", "headboard height:")
+        ):
+            continue
+        if lower_part in explicit_variant_pairs:
+            continue
+        label, sep, value = part.partition(":")
+        if sep and value.strip().lower() in explicit_variant_values:
+            continue
+        if lower_part in seen:
+            continue
+        seen.add(lower_part)
+        cleaned_parts.append(part)
+    return " | ".join(cleaned_parts)
+
+
 def _recipient_intro(order: Order, recipient_label: str, is_admin: bool) -> tuple[str, str]:
     if is_admin:
         return (
@@ -67,6 +105,7 @@ def _order_items_text(order: Order) -> str:
     blocks: list[str] = []
     for idx, item in enumerate(order.items.select_related("product").all(), start=1):
         product_name = item.product.name if item.product else f"Product #{item.product_id or 'Unknown'}"
+        style_value = _sanitize_style_value(item.style, item.selected_variants, item.dimension_details)
         lines = [
             f"{idx}. {product_name}",
             f"   Quantity: {item.quantity}",
@@ -76,8 +115,8 @@ def _order_items_text(order: Order) -> str:
             lines.append(f"   Size: {item.size}")
         if item.color:
             lines.append(f"   Colour: {item.color}")
-        if item.style:
-            lines.append(f"   Style: {item.style}")
+        if style_value:
+            lines.append(f"   Style: {style_value}")
         if item.dimension:
             lines.append(f"   Dimension: {item.dimension}")
         for dimension_line in _dimension_detail_lines(item.dimension_details):
@@ -94,6 +133,7 @@ def _order_items_text(order: Order) -> str:
 def _order_items_html(order: Order) -> str:
     cards: list[str] = []
     for idx, item in enumerate(order.items.select_related("product").all(), start=1):
+        style_value = _sanitize_style_value(item.style, item.selected_variants, item.dimension_details)
         rows = [
             ("Quantity", item.quantity),
             ("Unit price", _format_money(item.price)),
@@ -102,8 +142,8 @@ def _order_items_html(order: Order) -> str:
             rows.append(("Size", item.size))
         if item.color:
             rows.append(("Colour", item.color))
-        if item.style:
-            rows.append(("Style", item.style))
+        if style_value:
+            rows.append(("Style", style_value))
         if item.dimension:
             rows.append(("Dimension", item.dimension))
         if item.extras_total:
