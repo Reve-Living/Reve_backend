@@ -27,33 +27,33 @@ def _humanize_key(key: str) -> str:
     return key.replace("_", " ").strip().title()
 
 
-def _resolve_variant_value(raw_value, cache: dict[str, str] | None = None) -> str:
+def _resolve_variant_option(raw_value, cache: dict[str, tuple[str, str | None]] | None = None) -> tuple[str, str | None]:
     value = str(raw_value).strip()
     if not value:
-        return value
+        return value, None
     if cache is not None and value in cache:
         return cache[value]
 
     match = STYLE_OPTION_KEY_RE.match(value)
     if not match:
         if cache is not None:
-            cache[value] = value
-        return value
+            cache[value] = (value, None)
+        return value, None
 
     try:
         style = ProductStyle.objects.get(pk=int(match.group("style_id")))
     except ProductStyle.DoesNotExist:
         if cache is not None:
-            cache[value] = value
-        return value
+            cache[value] = (value, None)
+        return value, None
 
     options = style.options or []
     try:
         option = options[int(match.group("option_index"))]
     except (IndexError, ValueError, TypeError):
         if cache is not None:
-            cache[value] = value
-        return value
+            cache[value] = (value, None)
+        return value, None
 
     label = (
         option.get("label")
@@ -62,9 +62,20 @@ def _resolve_variant_value(raw_value, cache: dict[str, str] | None = None) -> st
         or value
     )
     label = str(label).strip() or value
+    price_delta = option.get("price_delta")
+    price_text = None
+    try:
+        if price_delta not in (None, "", 0, "0", "0.0", "0.00"):
+            price_text = _format_money(price_delta)
+    except (TypeError, ValueError):
+        price_text = None
     if cache is not None:
-        cache[value] = label
-    return label
+        cache[value] = (label, price_text)
+    return label, price_text
+
+
+def _resolve_variant_value(raw_value, cache: dict[str, tuple[str, str | None]] | None = None) -> str:
+    return _resolve_variant_option(raw_value, cache)[0]
 
 
 def _payment_label(method: str) -> str:
@@ -76,7 +87,7 @@ def _payment_label(method: str) -> str:
 
 
 def _build_variant_lines(selected_variants: dict) -> list[str]:
-    value_cache: dict[str, str] = {}
+    value_cache: dict[str, tuple[str, str | None]] = {}
     lines: list[str] = []
     for key, value in (selected_variants or {}).items():
         if value in (None, "", [], {}):
@@ -84,7 +95,8 @@ def _build_variant_lines(selected_variants: dict) -> list[str]:
         if isinstance(value, list):
             rendered = ", ".join(_resolve_variant_value(v, value_cache) for v in value)
         else:
-            rendered = _resolve_variant_value(value, value_cache)
+            label, price_text = _resolve_variant_option(value, value_cache)
+            rendered = f"{label} (+{price_text})" if price_text else label
         lines.append(f"{_humanize_key(str(key))}: {rendered}")
     return lines
 
@@ -98,7 +110,7 @@ def _sanitize_style_value(style: str, selected_variants: dict, dimension_details
         return ""
 
     dimension_lines = {line.lower() for line in _dimension_detail_lines(dimension_details)}
-    value_cache: dict[str, str] = {}
+    value_cache: dict[str, tuple[str, str | None]] = {}
     explicit_variant_values = {
         _resolve_variant_value(value, value_cache).strip().lower()
         for value in (selected_variants or {}).values()
@@ -166,7 +178,7 @@ def _order_items_text(order: Order) -> str:
         for dimension_line in _dimension_detail_lines(item.dimension_details):
             lines.append(f"   {dimension_line}")
         if item.extras_total:
-            lines.append(f"   Extras total: {_format_money(item.extras_total)}")
+            lines.append(f"   Optional add-ons total: {_format_money(item.extras_total)}")
         lines.append(f"   Include dimension: {'Yes' if item.include_dimension else 'No'}")
         for variant_line in _build_variant_lines(item.selected_variants):
             lines.append(f"   {variant_line}")
@@ -188,7 +200,7 @@ def _order_items_html(order: Order) -> str:
         if item.dimension:
             rows.append(("Dimension", item.dimension))
         if item.extras_total:
-            rows.append(("Extras total", _format_money(item.extras_total)))
+            rows.append(("Optional add-ons total", _format_money(item.extras_total)))
         rows.append(("Include dimension", "Yes" if item.include_dimension else "No"))
         for variant_line in _build_variant_lines(item.selected_variants):
             key, _, value = variant_line.partition(": ")
