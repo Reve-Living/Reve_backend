@@ -152,7 +152,6 @@ def _order_items_text(order: Order) -> str:
     blocks: list[str] = []
     for idx, item in enumerate(order.items.select_related("product").all(), start=1):
         product_name = item.product.name if item.product else f"Product #{item.product_id or 'Unknown'}"
-        style_value = _sanitize_style_value(item.style, item.selected_variants, item.dimension_details)
         lines = [
             f"{idx}. {product_name}",
             f"   Quantity: {item.quantity}",
@@ -162,8 +161,6 @@ def _order_items_text(order: Order) -> str:
             lines.append(f"   Size: {item.size}")
         if item.color:
             lines.append(f"   Colour: {item.color}")
-        if style_value:
-            lines.append(f"   Style: {style_value}")
         if item.dimension:
             lines.append(f"   Dimension: {item.dimension}")
         for dimension_line in _dimension_detail_lines(item.dimension_details):
@@ -180,7 +177,6 @@ def _order_items_text(order: Order) -> str:
 def _order_items_html(order: Order) -> str:
     cards: list[str] = []
     for idx, item in enumerate(order.items.select_related("product").all(), start=1):
-        style_value = _sanitize_style_value(item.style, item.selected_variants, item.dimension_details)
         rows = [
             ("Quantity", item.quantity),
             ("Unit price", _format_money(item.price)),
@@ -189,8 +185,6 @@ def _order_items_html(order: Order) -> str:
             rows.append(("Size", item.size))
         if item.color:
             rows.append(("Colour", item.color))
-        if style_value:
-            rows.append(("Style", style_value))
         if item.dimension:
             rows.append(("Dimension", item.dimension))
         if item.extras_total:

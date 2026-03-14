@@ -56,6 +56,6 @@ class OrderEmailTests(TestCase):
         self.assertIn("ORD-", customer_email.subject)
         self.assertIn("Ayesha Jahangir", customer_email.body)
         self.assertIn("Please call before delivery.", customer_email.body)
-        self.assertIn("Buttoned headboard", customer_email.body)
         self.assertIn("Plush Velvet", customer_email.body)
+        self.assertIn("Storage: Ottoman", customer_email.body)
         self.assertEqual(len(customer_email.attachments), 1)
