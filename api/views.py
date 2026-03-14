@@ -12,6 +12,7 @@ from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from django.contrib.auth.models import User
 from django.utils.text import slugify
+from django.db import transaction
 from django.db.models import Prefetch
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
@@ -65,6 +66,7 @@ from .serializers import (
     ProductStyleLibrarySerializer,
     MattressOptionSerializer,
 )
+from .emails import send_order_confirmation_emails
 
 
 class HealthCheckView(APIView):
@@ -920,6 +922,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 include_dimension=bool(item.get("include_dimension", True)),
             )
 
+        transaction.on_commit(lambda: send_order_confirmation_emails(order.id))
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"])
