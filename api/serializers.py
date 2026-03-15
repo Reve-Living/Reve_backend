@@ -65,7 +65,7 @@ class CategorySerializer(serializers.ModelSerializer):
 class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductImage
-        fields = ("id", "url", "color_name")
+        fields = ("id", "url", "color_name", "alt_text")
 
 
 class ProductVideoSerializer(serializers.ModelSerializer):
@@ -223,6 +223,8 @@ class ProductSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "slug",
+            "meta_title",
+            "meta_description",
             "category",
             "subcategory",
             "price",
@@ -368,6 +370,8 @@ class ProductListSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "slug",
+            "meta_title",
+            "meta_description",
             "price",
             "original_price",
             "discount_percentage",
@@ -423,6 +427,8 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "slug",
+            "meta_title",
+            "meta_description",
             "category",
             "subcategory",
             "price",

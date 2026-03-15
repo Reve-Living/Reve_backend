@@ -16,6 +16,7 @@ from django.db import transaction
 from django.db.models import Prefetch
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
+from django.http import HttpResponse
 from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
@@ -67,6 +68,7 @@ from .serializers import (
     MattressOptionSerializer,
 )
 from .emails import send_order_confirmation_emails
+from .delivery_note_pdf import build_delivery_note_pdf
 
 
 class HealthCheckView(APIView):
@@ -495,6 +497,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 product=product,
                 url=img.get("url"),
                 color_name=img.get("color_name", ""),
+                alt_text=img.get("alt_text", ""),
             )
         for vid in videos:
             ProductVideo.objects.create(product=product, url=vid.get("url"))
@@ -958,6 +961,17 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.status = "cancelled"
         order.save()
         return Response({"status": "order marked as cancelled"})
+
+    @action(detail=True, methods=["get"], permission_classes=[IsAdminUser])
+    def delivery_note_pdf(self, request, pk=None):
+        order = (
+            Order.objects.prefetch_related("items__product")
+            .get(pk=pk)
+        )
+        pdf_bytes = build_delivery_note_pdf(order)
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="order-{order.id}-delivery-note.pdf"'
+        return response
 
 
 class ReviewViewSet(viewsets.ModelViewSet):

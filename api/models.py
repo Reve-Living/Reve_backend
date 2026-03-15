@@ -7,6 +7,9 @@ class Category(models.Model):
     slug = models.SlugField(unique=True, max_length=255)
     description = models.TextField(blank=True)
     image = models.URLField(max_length=1000, blank=True)
+    image_alt_text = models.CharField(max_length=255, blank=True, default="")
+    meta_title = models.CharField(max_length=255, blank=True, default="")
+    meta_description = models.TextField(blank=True, default="")
     sort_order = models.IntegerField(default=0)
 
     def __str__(self) -> str:
@@ -19,6 +22,9 @@ class SubCategory(models.Model):
     slug = models.SlugField(unique=True, max_length=255)
     description = models.TextField(blank=True)
     image = models.URLField(max_length=1000, blank=True)
+    image_alt_text = models.CharField(max_length=255, blank=True, default="")
+    meta_title = models.CharField(max_length=255, blank=True, default="")
+    meta_description = models.TextField(blank=True, default="")
     sort_order = models.IntegerField(default=0)
 
     def __str__(self) -> str:
@@ -66,6 +72,8 @@ class HeroSlide(models.Model):
 class Product(models.Model):
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True, max_length=255)
+    meta_title = models.CharField(max_length=255, blank=True, default="")
+    meta_description = models.TextField(blank=True, default="")
     category = models.ForeignKey(Category, related_name="products", on_delete=models.CASCADE)
     subcategory = models.ForeignKey(
         SubCategory, related_name="products", on_delete=models.SET_NULL, null=True, blank=True
@@ -112,6 +120,7 @@ class ProductImage(models.Model):
     product = models.ForeignKey(Product, related_name="images", on_delete=models.CASCADE)
     url = models.URLField(max_length=1000)
     color_name = models.CharField(max_length=120, blank=True, default="")
+    alt_text = models.CharField(max_length=255, blank=True, default="")
 
 
 class ProductVideo(models.Model):
@@ -242,9 +251,11 @@ class Order(models.Model):
     last_name = models.CharField(max_length=100)
     email = models.EmailField()
     phone = models.CharField(max_length=20)
+    alternative_phone = models.CharField(max_length=20, blank=True, default="")
     address = models.TextField()
     city = models.CharField(max_length=100)
     postal_code = models.CharField(max_length=20)
+    floor_number = models.CharField(max_length=20, blank=True, default="")
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     delivery_charges = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")

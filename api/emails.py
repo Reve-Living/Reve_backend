@@ -8,74 +8,13 @@ from typing import Iterable
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 
-from .models import Order, ProductStyle
+from .models import Order
 
 logger = logging.getLogger(__name__)
 
 DATA_URL_RE = re.compile(r"^data:(?P<mime>[^;]+);base64,(?P<data>.+)$")
-STYLE_OPTION_KEY_RE = re.compile(r"^(?P<style_id>\d+)-(?P<option_index>\d+)$")
-
-
-def _format_money(value) -> str:
-    try:
-        return f"GBP {float(value):.2f}"
-    except (TypeError, ValueError):
-        return str(value)
-
-
-def _humanize_key(key: str) -> str:
-    return key.replace("_", " ").strip().title()
-
-
-def _resolve_variant_option(raw_value, cache: dict[str, tuple[str, str | None]] | None = None) -> tuple[str, str | None]:
-    value = str(raw_value).strip()
-    if not value:
-        return value, None
-    if cache is not None and value in cache:
-        return cache[value]
-
-    match = STYLE_OPTION_KEY_RE.match(value)
-    if not match:
-        if cache is not None:
-            cache[value] = (value, None)
-        return value, None
-
-    try:
-        style = ProductStyle.objects.get(pk=int(match.group("style_id")))
-    except ProductStyle.DoesNotExist:
-        if cache is not None:
-            cache[value] = (value, None)
-        return value, None
-
-    options = style.options or []
-    try:
-        option = options[int(match.group("option_index"))]
-    except (IndexError, ValueError, TypeError):
-        if cache is not None:
-            cache[value] = (value, None)
-        return value, None
-
-    label = (
-        option.get("label")
-        or option.get("name")
-        or option.get("title")
-        or value
-    )
-    label = str(label).strip() or value
-    price_delta = option.get("price_delta")
-    price_text = None
-    try:
-        if price_delta not in (None, "", 0, "0", "0.0", "0.00"):
-            price_text = _format_money(price_delta)
-    except (TypeError, ValueError):
-        price_text = None
-    if cache is not None:
-        cache[value] = (label, price_text)
-    return label, price_text
-
-
-def _resolve_variant_value(raw_value, cache: dict[str, tuple[str, str | None]] | None = None) -> str:
-    return _resolve_variant_option(raw_value, cache)[0]
+COMPANY_PHONE = "+44 7386 340475"
+COMPANY_SUPPORT_EMAIL = "support@reveliving.co.uk"
 
 
 def _payment_label(method: str) -> str:
@@ -86,226 +25,161 @@ def _payment_label(method: str) -> str:
     }.get((method or "").lower(), method or "Not provided")
 
 
-def _build_variant_lines(selected_variants: dict) -> list[str]:
-    value_cache: dict[str, tuple[str, str | None]] = {}
-    lines: list[str] = []
-    for key, value in (selected_variants or {}).items():
-        if value in (None, "", [], {}):
-            continue
-        if isinstance(value, list):
-            rendered = ", ".join(_resolve_variant_value(v, value_cache) for v in value)
-        else:
-            label, price_text = _resolve_variant_option(value, value_cache)
-            rendered = f"{label} (+{price_text})" if price_text else label
-        lines.append(f"{_humanize_key(str(key))}: {rendered}")
-    return lines
-
-
-def _dimension_detail_lines(raw_details: str) -> list[str]:
-    return [part.strip() for part in (raw_details or "").split("|") if part.strip()]
-
-
-def _sanitize_style_value(style: str, selected_variants: dict, dimension_details: str) -> str:
-    if not style:
-        return ""
-
-    dimension_lines = {line.lower() for line in _dimension_detail_lines(dimension_details)}
-    value_cache: dict[str, tuple[str, str | None]] = {}
-    explicit_variant_values = {
-        _resolve_variant_value(value, value_cache).strip().lower()
-        for value in (selected_variants or {}).values()
-        if value not in (None, "", [], {})
-    }
-    explicit_variant_pairs = {
-        f"{_humanize_key(str(key))}: {_resolve_variant_value(value, value_cache)}".strip().lower()
-        for key, value in (selected_variants or {}).items()
-        if value not in (None, "", [], {})
-    }
-
-    cleaned_parts: list[str] = []
-    seen: set[str] = set()
-    for raw_part in style.split("|"):
-        part = raw_part.strip()
-        if not part:
-            continue
-        lower_part = part.lower()
-        if lower_part in dimension_lines:
-            continue
-        if any(
-            lower_part.startswith(prefix)
-            for prefix in ("length:", "width:", "bed height:", "headboard height:")
-        ):
-            continue
-        if lower_part in explicit_variant_pairs:
-            continue
-        label, sep, value = part.partition(":")
-        if sep and value.strip().lower() in explicit_variant_values:
-            continue
-        if lower_part in seen:
-            continue
-        seen.add(lower_part)
-        cleaned_parts.append(part)
-    return " | ".join(cleaned_parts)
-
-
-def _recipient_intro(order: Order, recipient_label: str, is_admin: bool) -> tuple[str, str]:
-    if is_admin:
-        return (
-            f"Hey {recipient_label}!",
-            f"A new order has just been placed by {order.first_name} {order.last_name}.",
-        )
-    return (
-        f"Hey {recipient_label}!",
-        f"Your order is confirmed. We have received your order and our team will process it shortly.",
-    )
-
-
-def _order_items_text(order: Order) -> str:
-    blocks: list[str] = []
-    for idx, item in enumerate(order.items.select_related("product").all(), start=1):
-        product_name = item.product.name if item.product else f"Product #{item.product_id or 'Unknown'}"
-        lines = [
-            f"{idx}. {product_name}",
-            f"   Quantity: {item.quantity}",
-            f"   Unit price: {_format_money(item.price)}",
-        ]
-        if item.size:
-            lines.append(f"   Size: {item.size}")
-        if item.color:
-            lines.append(f"   Colour: {item.color}")
-        if item.dimension:
-            lines.append(f"   Dimension: {item.dimension}")
-        for dimension_line in _dimension_detail_lines(item.dimension_details):
-            lines.append(f"   {dimension_line}")
-        if item.extras_total:
-            lines.append(f"   Optional add-ons total: {_format_money(item.extras_total)}")
-        lines.append(f"   Include dimension: {'Yes' if item.include_dimension else 'No'}")
-        for variant_line in _build_variant_lines(item.selected_variants):
-            lines.append(f"   {variant_line}")
-        blocks.append("\n".join(lines))
-    return "\n\n".join(blocks) if blocks else "No items found."
-
-
-def _order_items_html(order: Order) -> str:
-    cards: list[str] = []
-    for idx, item in enumerate(order.items.select_related("product").all(), start=1):
-        rows = [
-            ("Quantity", item.quantity),
-            ("Unit price", _format_money(item.price)),
-        ]
-        if item.size:
-            rows.append(("Size", item.size))
-        if item.color:
-            rows.append(("Colour", item.color))
-        if item.dimension:
-            rows.append(("Dimension", item.dimension))
-        if item.extras_total:
-            rows.append(("Optional add-ons total", _format_money(item.extras_total)))
-        rows.append(("Include dimension", "Yes" if item.include_dimension else "No"))
-        for variant_line in _build_variant_lines(item.selected_variants):
-            key, _, value = variant_line.partition(": ")
-            rows.append((key, value))
-
-        rendered_rows = "".join(
-            f"<tr><td style='padding:6px 12px 6px 0; font-weight:600; vertical-align:top;'>{escape(str(label))}</td>"
-            f"<td style='padding:6px 0; vertical-align:top;'>{escape(str(value))}</td></tr>"
-            for label, value in rows
-        )
-        dimension_list = "".join(
-            f"<li style='margin:0 0 6px;'>{escape(line)}</li>" for line in _dimension_detail_lines(item.dimension_details)
-        )
-        dimension_block = (
-            "<div style='margin-top:12px;'>"
-            "<p style='margin:0 0 8px; font-size:13px; font-weight:700;'>Dimensions</p>"
-            f"<ul style='margin:0; padding-left:18px; font-size:14px;'>{dimension_list}</ul>"
-            "</div>"
-            if dimension_list
-            else ""
-        )
-        product_name = item.product.name if item.product else f"Product #{item.product_id or 'Unknown'}"
-        cards.append(
-            "<div style='margin:0 0 18px; padding:16px; border:1px solid #e7e3dd; border-radius:12px;'>"
-            f"<p style='margin:0 0 10px; font-size:16px; font-weight:700;'>{idx}. {escape(product_name)}</p>"
-            f"<table style='width:100%; border-collapse:collapse; font-size:14px;'>{rendered_rows}</table>"
-            f"{dimension_block}"
-            "</div>"
-        )
-    return "".join(cards) or "<p>No items found.</p>"
-
-
 def _message_subject(order: Order) -> str:
-    return f"Order ORD-{order.id} confirmation"
+    return f"Order Confirmation - Reve Living (Order #{order.id})"
+
+
+def _format_pounds(value) -> str:
+    try:
+        return f"\u00a3{float(value):.2f}"
+    except (TypeError, ValueError):
+        return f"\u00a3{value}"
+
+
+def _customer_name(order: Order) -> str:
+    return f"{order.first_name} {order.last_name}".strip()
+
+
+def _order_items_rows_text(order: Order) -> str:
+    rows: list[str] = []
+    for item in order.items.select_related("product").all():
+        product_name = item.product.name if item.product else f"Product #{item.product_id or 'Unknown'}"
+        rows.append(f"{product_name} | {item.quantity} | {_format_pounds(item.price)}")
+    return "\n".join(rows) if rows else "No products found."
+
+
+def _order_items_rows_html(order: Order) -> str:
+    rows: list[str] = []
+    for item in order.items.select_related("product").all():
+        product_name = item.product.name if item.product else f"Product #{item.product_id or 'Unknown'}"
+        rows.append(
+            "<tr>"
+            f"<td style='border:1px solid #808080; padding:6px 8px;'>{escape(product_name)}</td>"
+            f"<td style='border:1px solid #808080; padding:6px 8px;'>{item.quantity}</td>"
+            f"<td style='border:1px solid #808080; padding:6px 8px;'>{escape(_format_pounds(item.price))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(
+            "<tr>"
+            "<td style='border:1px solid #808080; padding:6px 8px;'>No products found.</td>"
+            "<td style='border:1px solid #808080; padding:6px 8px;'>-</td>"
+            "<td style='border:1px solid #808080; padding:6px 8px;'>-</td>"
+            "</tr>"
+        )
+    return "".join(rows)
 
 
 def _message_text(order: Order, recipient_label: str, is_admin: bool) -> str:
-    greeting, intro = _recipient_intro(order, recipient_label, is_admin)
-    payment_id = order.payment_id or "Not available yet"
-    reference_images_count = len(order.reference_images or [])
+    del recipient_label
+
+    intro_lines = (
+        [
+            "REVE LIVING",
+            "A new order has been received and is being processed.",
+            "",
+        ]
+        if is_admin
+        else [
+            "REVE LIVING",
+            "Thank you for your order.",
+            "Your order has been received and is being processed.",
+            "",
+        ]
+    )
+
     return (
-        f"{greeting}\n\n"
-        f"{intro}\n\n"
-        f"Order number: ORD-{order.id}\n"
-        f"Created at: {order.created_at:%Y-%m-%d %H:%M:%S} UTC\n"
-        f"Status: {order.status}\n"
-        f"Payment method: {_payment_label(order.payment_method)}\n"
-        f"Payment ID: {payment_id}\n"
-        f"Order total: {_format_money(order.total_amount)}\n"
-        f"Delivery charges: {_format_money(order.delivery_charges)}\n\n"
-        f"Customer details\n"
-        f"Name: {order.first_name} {order.last_name}\n"
-        f"Email: {order.email}\n"
-        f"Phone: {order.phone}\n"
-        f"Address: {order.address}\n"
-        f"City: {order.city}\n"
-        f"Postal code: {order.postal_code}\n\n"
-        f"Order notes\n"
-        f"Special notes: {order.special_notes or 'None'}\n"
-        f"Reference images attached: {reference_images_count}\n\n"
-        f"Items ordered\n"
-        f"{_order_items_text(order)}\n\n"
-        "Thank you,\nREVE Living"
+        "2. EMAIL AUTOMATION - CUSTOMER ORDER CONFIRMATION\n\n"
+        f"Subject: {_message_subject(order)}\n\n"
+        + "\n".join(intro_lines)
+        + "\n"
+        + "Order Details\n\n"
+        + f"Order Number: {order.id}\n"
+        + f"Order Date: {order.created_at:%d %B %Y}\n\n"
+        + "Delivery Address\n\n"
+        + f"{_customer_name(order)}\n"
+        + f"{order.address}\n"
+        + f"{order.city}\n"
+        + f"{order.postal_code}\n\n"
+        + "Products Ordered\n\n"
+        + "Product Name | Quantity | Price\n"
+        + f"{_order_items_rows_text(order)}\n\n"
+        + "Payment Information\n\n"
+        + f"Payment Method: {_payment_label(order.payment_method)}\n"
+        + f"Total Amount: {_format_pounds(order.total_amount)}\n\n"
+        + "Delivery will be made within the estimated delivery timeframe for your order.\n"
+        + "If anything changes, you will be notified.\n\n"
+        + "Important\n\n"
+        + "If any of the above information is incorrect, please contact Reve Living as soon as possible.\n"
+        + f"Email: {COMPANY_SUPPORT_EMAIL}\n"
+        + f"Phone: {COMPANY_PHONE}"
     )
 
 
 def _message_html(order: Order, recipient_label: str, is_admin: bool) -> str:
-    greeting, intro = _recipient_intro(order, recipient_label, is_admin)
-    payment_id = order.payment_id or "Not available yet"
-    reference_images_count = len(order.reference_images or [])
+    del recipient_label
+
+    intro_block = (
+        "<p style='margin:0 0 4px; font-weight:700;'>REVE LIVING</p>"
+        "<p style='margin:0;'>A new order has been received and is being processed.</p>"
+        if is_admin
+        else "<p style='margin:0 0 4px; font-weight:700;'>REVE LIVING</p>"
+        "<p style='margin:0;'>Thank you for your order.</p>"
+        "<p style='margin:0;'>Your order has been received and is being processed.</p>"
+    )
+
     return f"""
-    <div style="font-family:Arial,Helvetica,sans-serif; color:#2f241c; line-height:1.5;">
-      <h2 style="margin:0 0 16px;">Order ORD-{order.id} confirmation</h2>
-      <p style="margin:0 0 8px; font-size:18px; font-weight:700;">{escape(greeting)}</p>
-      <p style="margin:0 0 20px;">{escape(intro)}</p>
+    <div style="font-family:Arial,Helvetica,sans-serif; color:#000000; line-height:1.35; font-size:14px; max-width:760px;">
+      <h2 style="margin:0 0 18px; font-size:28px; font-weight:800; text-transform:uppercase;">2. EMAIL AUTOMATION - CUSTOMER ORDER CONFIRMATION</h2>
+      <p style="margin:0 0 24px;"><strong>Subject:</strong> {escape(_message_subject(order))}</p>
 
-      <div style="margin:0 0 20px; padding:16px; border:1px solid #e7e3dd; border-radius:12px; background:#fbf9f6;">
-        <p style="margin:0 0 8px;"><strong>Created at:</strong> {order.created_at:%Y-%m-%d %H:%M:%S} UTC</p>
-        <p style="margin:0 0 8px;"><strong>Status:</strong> {escape(order.status)}</p>
-        <p style="margin:0 0 8px;"><strong>Payment method:</strong> {escape(_payment_label(order.payment_method))}</p>
-        <p style="margin:0 0 8px;"><strong>Payment ID:</strong> {escape(payment_id)}</p>
-        <p style="margin:0 0 8px;"><strong>Order total:</strong> {escape(_format_money(order.total_amount))}</p>
-        <p style="margin:0;"><strong>Delivery charges:</strong> {escape(_format_money(order.delivery_charges))}</p>
+      <div style="margin:0 0 26px;">
+        {intro_block}
       </div>
 
-      <h3 style="margin:0 0 12px;">Customer details</h3>
-      <div style="margin:0 0 20px; padding:16px; border:1px solid #e7e3dd; border-radius:12px;">
-        <p style="margin:0 0 8px;"><strong>Name:</strong> {escape(order.first_name)} {escape(order.last_name)}</p>
-        <p style="margin:0 0 8px;"><strong>Email:</strong> {escape(order.email)}</p>
-        <p style="margin:0 0 8px;"><strong>Phone:</strong> {escape(order.phone)}</p>
-        <p style="margin:0 0 8px;"><strong>Address:</strong> {escape(order.address)}</p>
-        <p style="margin:0 0 8px;"><strong>City:</strong> {escape(order.city)}</p>
-        <p style="margin:0;"><strong>Postal code:</strong> {escape(order.postal_code)}</p>
+      <h3 style="margin:0 0 140px; font-size:32px; font-style:italic; font-weight:500;">Order Details</h3>
+
+      <div style="border-top:8px solid #222222; margin:0 0 40px;"></div>
+
+      <div style="margin:0 0 28px;">
+        <p style="margin:0 0 4px;">Order Number: {order.id}</p>
+        <p style="margin:0;">Order Date: {order.created_at:%d %B %Y}</p>
       </div>
 
-      <h3 style="margin:0 0 12px;">Order notes</h3>
-      <div style="margin:0 0 20px; padding:16px; border:1px solid #e7e3dd; border-radius:12px;">
-        <p style="margin:0 0 10px;"><strong>Special notes:</strong> {escape(order.special_notes or "None")}</p>
-        <p style="margin:0;"><strong>Reference images attached:</strong> {reference_images_count}</p>
+      <h3 style="margin:0 0 18px; font-size:32px; font-style:italic; font-weight:500;">Delivery Address</h3>
+      <div style="margin:0 0 28px;">
+        <p style="margin:0;">{escape(_customer_name(order))}</p>
+        <p style="margin:0;">{escape(order.address)}</p>
+        <p style="margin:0;">{escape(order.city)}</p>
+        <p style="margin:0;">{escape(order.postal_code)}</p>
       </div>
 
-      <h3 style="margin:0 0 12px;">Items ordered</h3>
-      {_order_items_html(order)}
+      <h3 style="margin:0 0 18px; font-size:32px; font-style:italic; font-weight:500;">Products Ordered</h3>
+      <table style="border-collapse:collapse; width:100%; max-width:560px; margin:0 0 34px;">
+        <thead>
+          <tr>
+            <th style="border:1px solid #808080; background:#e9e9e9; padding:6px 8px; text-align:left; font-weight:400;">Product Name</th>
+            <th style="border:1px solid #808080; background:#e9e9e9; padding:6px 8px; text-align:left; font-weight:400;">Quantity</th>
+            <th style="border:1px solid #808080; background:#e9e9e9; padding:6px 8px; text-align:left; font-weight:400;">Price</th>
+          </tr>
+        </thead>
+        <tbody>
+          {_order_items_rows_html(order)}
+        </tbody>
+      </table>
 
-      <p style="margin:24px 0 0;">Thank you,<br />REVE Living</p>
+      <h3 style="margin:0 0 18px; font-size:32px; font-style:italic; font-weight:500;">Payment Information</h3>
+      <div style="margin:0 0 28px;">
+        <p style="margin:0;">Payment Method: {escape(_payment_label(order.payment_method))}</p>
+        <p style="margin:0;">Total Amount: {escape(_format_pounds(order.total_amount))}</p>
+      </div>
+
+      <p style="margin:0 0 28px;">Delivery will be made within the estimated delivery timeframe for your order.<br />If anything changes, you will be notified.</p>
+
+      <h3 style="margin:0 0 18px; font-size:32px; font-style:italic; font-weight:500;">Important</h3>
+      <p style="margin:0;">If any of the above information is incorrect, please contact Reve Living as soon as possible.</p>
+      <p style="margin:0;">Email: {escape(COMPANY_SUPPORT_EMAIL)}</p>
+      <p style="margin:0;">Phone: {escape(COMPANY_PHONE)}</p>
     </div>
     """
 
