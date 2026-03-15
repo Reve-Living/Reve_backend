@@ -58,7 +58,8 @@ class OrderEmailTests(TestCase):
         customer_email = next(message for message in mail.outbox if message.to == ["customer@example.com"])
         order_id = response.data["id"]
         self.assertEqual(customer_email.subject, f"Order Confirmation - Reve Living (Order #{order_id})")
-        self.assertIn("2. EMAIL AUTOMATION - CUSTOMER ORDER CONFIRMATION", customer_email.body)
+        self.assertNotIn("2. EMAIL AUTOMATION - CUSTOMER ORDER CONFIRMATION", customer_email.body)
+        self.assertNotIn("Subject: Order Confirmation", customer_email.body)
         self.assertIn("Ayesha Jahangir", customer_email.body)
         self.assertIn("Product Name | Quantity | Price", customer_email.body)
         self.assertIn("Payment Method: PayPal", customer_email.body)

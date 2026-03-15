@@ -89,9 +89,7 @@ def _message_text(order: Order, recipient_label: str, is_admin: bool) -> str:
     )
 
     return (
-        "2. EMAIL AUTOMATION - CUSTOMER ORDER CONFIRMATION\n\n"
-        f"Subject: {_message_subject(order)}\n\n"
-        + "\n".join(intro_lines)
+        "\n".join(intro_lines)
         + "\n"
         + "Order Details\n\n"
         + f"Order Number: {order.id}\n"
@@ -130,9 +128,6 @@ def _message_html(order: Order, recipient_label: str, is_admin: bool) -> str:
 
     return f"""
     <div style="font-family:Arial,Helvetica,sans-serif; color:#000000; line-height:1.35; font-size:14px; max-width:760px;">
-      <h2 style="margin:0 0 18px; font-size:28px; font-weight:800; text-transform:uppercase;">2. EMAIL AUTOMATION - CUSTOMER ORDER CONFIRMATION</h2>
-      <p style="margin:0 0 24px;"><strong>Subject:</strong> {escape(_message_subject(order))}</p>
-
       <div style="margin:0 0 26px;">
         {intro_block}
       </div>
