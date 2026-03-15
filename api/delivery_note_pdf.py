@@ -118,7 +118,7 @@ def build_delivery_note_pdf(order: Order) -> bytes:
     y = _draw_heading(c, left, y, "Customer Details")
     y = _draw_label_value(c, left, y, "Customer Name: ", customer_name)
     y = _draw_label_value(c, left, y, "Phone Number: ", order.phone)
-    y = _draw_label_value(c, left, y, "Alternative Phone: ", note_parts["alt_phone"] or "")
+    y = _draw_label_value(c, left, y, "Alternative Phone: ", note_parts["alt_phone"])
 
     c.setLineWidth(4)
     c.line(0, height / 2, width, height / 2)
@@ -147,24 +147,15 @@ def build_delivery_note_pdf(order: Order) -> bytes:
             y = _draw_text(c, left, y, note_line, size=10)
             y -= 4
     else:
-        y = _draw_text(c, left, y, "(Customer note if provided)", size=10)
+        y = _draw_text(c, left, y, "Not given", size=10)
     y -= 20
 
     y = _draw_heading(c, left, y, "Products Ordered")
     y = _draw_products_table(c, left + 60, y, order)
 
-    y = _draw_heading(c, left, y, "Payment Information (Auto-filled)")
+    y = _draw_heading(c, left, y, "Payment Information")
     y = _draw_label_value(c, left, y, "Payment Method: ", order.payment_method or "")
     y = _draw_label_value(c, left, y, "Total Amount: ", f"£{float(order.total_amount):.2f}")
-    y -= 4
-    y = _draw_label_value(c, left, y, "Delivery: ", "Standard Delivery")
-    y = _draw_label_value(c, left, y, "Assembly: ", "Not Required")
-    y -= 10
-    y = _draw_text(c, left, y, "Examples:", size=10)
-    y -= 14
-    y = _draw_text(c, left, y, "Assembly: Not Required", size=10)
-    y -= 14
-    y = _draw_text(c, left, y, "Assembly: Included", size=10)
     y -= 28
 
     y = _draw_heading(c, left, y, "Delivery Confirmation")
