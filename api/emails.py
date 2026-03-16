@@ -70,6 +70,67 @@ def _order_items_rows_html(order: Order) -> str:
     return "".join(rows)
 
 
+def _line_break_html(value: str) -> str:
+    lines = [escape(line.strip()) for line in str(value or "").splitlines() if line.strip()]
+    return "<br />".join(lines) if lines else "-"
+
+
+def _item_description_html(order: Order) -> str:
+    lines: list[str] = []
+    for item in order.items.select_related("product").all():
+        product_name = item.product.name if item.product else f"Product #{item.product_id or 'Unknown'}"
+        parts = [f"{item.quantity}x {product_name}"]
+        if item.size:
+            parts.append(f"Size: {item.size}")
+        if item.color:
+            parts.append(f"Colour: {item.color}")
+        if item.style:
+            parts.append(f"Style: {item.style}")
+        if item.dimension and item.include_dimension:
+            dim_text = item.dimension
+            if item.dimension_details:
+                dim_text = f"{dim_text} ({item.dimension_details})"
+            parts.append(f"Dimensions: {dim_text}")
+        if item.selected_variants:
+            variant_parts = [f"{key}: {value}" for key, value in item.selected_variants.items() if value]
+            if variant_parts:
+                parts.append(", ".join(variant_parts))
+        if item.extras_total:
+            try:
+                if float(item.extras_total) > 0:
+                    parts.append(f"Extras: {_format_pounds(item.extras_total)}")
+            except (TypeError, ValueError):
+                pass
+        lines.append(" | ".join(parts))
+    return "<br /><br />".join(escape(line) for line in lines) if lines else "No products found."
+
+
+def _label_value_row_html(label: str, value: str, tall: bool = False) -> str:
+    padding = "12px 14px" if tall else "10px 14px"
+    return (
+        "<tr>"
+        f"<td style='width:38%; border:1px solid #d6d6d6; padding:{padding}; vertical-align:top; "
+        "font-weight:600; background:#fafafa;'>"
+        f"{escape(label)}"
+        "</td>"
+        f"<td style='width:62%; border:1px solid #d6d6d6; padding:{padding}; vertical-align:top;'>"
+        f"{value or '-'}"
+        "</td>"
+        "</tr>"
+    )
+
+
+def _section_heading_row_html(title: str) -> str:
+    return (
+        "<tr>"
+        f"<td colspan='2' style='border:1px solid #d6d6d6; padding:12px 14px; background:#f1f1f1; "
+        "font-size:15px; font-weight:700;'>"
+        f"{escape(title)}"
+        "</td>"
+        "</tr>"
+    )
+
+
 def _message_text(order: Order, recipient_label: str, is_admin: bool) -> str:
     del recipient_label
 
@@ -126,36 +187,54 @@ def _message_html(order: Order, recipient_label: str, is_admin: bool) -> str:
         "<p style='margin:0;'>Your order has been received and is being processed.</p>"
     )
 
+    delivery_address = "<br />".join(
+        [
+            escape(part)
+            for part in [
+                _customer_name(order),
+                order.address,
+                order.city,
+                order.postal_code,
+            ]
+            if str(part or "").strip()
+        ]
+    )
+    order_rows = [
+        _section_heading_row_html("Order Details"),
+        _label_value_row_html("Order Number", escape(str(order.id))),
+        _label_value_row_html("Order Date", escape(f"{order.created_at:%d %B %Y}")),
+        _label_value_row_html("Customer Name", escape(_customer_name(order))),
+        _label_value_row_html("Phone Number", escape(order.phone or "-")),
+        _label_value_row_html("Alternative Phone Number", escape(order.alternative_phone or "-")),
+        _label_value_row_html("Email Address", escape(order.email or "-")),
+        _label_value_row_html("Street Address", delivery_address or "-"),
+        _label_value_row_html("Customer Floor Number", escape(order.floor_number or "-")),
+        _label_value_row_html("Special Notes", _line_break_html(order.special_notes), tall=True),
+        _label_value_row_html("Product Description", _item_description_html(order), tall=True),
+        _label_value_row_html("Delivery Charges", escape(_format_pounds(order.delivery_charges))),
+        _label_value_row_html("Payment Method", escape(_payment_label(order.payment_method))),
+        _label_value_row_html("Total Amount", escape(_format_pounds(order.total_amount))),
+    ]
+
     return f"""
     <div style="font-family:Arial,Helvetica,sans-serif; color:#000000; line-height:1.35; font-size:14px; max-width:760px;">
       <div style="margin:0 0 26px;">
         {intro_block}
       </div>
 
-      <h3 style="margin:0 0 140px; font-size:32px; font-style:italic; font-weight:500;">Order Details</h3>
+      <table style="border-collapse:collapse; width:100%; max-width:760px; margin:0 0 34px;">
+        <tbody>
+          {''.join(order_rows)}
+        </tbody>
+      </table>
 
-      <div style="border-top:8px solid #222222; margin:0 0 40px;"></div>
-
-      <div style="margin:0 0 28px;">
-        <p style="margin:0 0 4px;">Order Number: {order.id}</p>
-        <p style="margin:0;">Order Date: {order.created_at:%d %B %Y}</p>
-      </div>
-
-      <h3 style="margin:0 0 18px; font-size:32px; font-style:italic; font-weight:500;">Delivery Address</h3>
-      <div style="margin:0 0 28px;">
-        <p style="margin:0;">{escape(_customer_name(order))}</p>
-        <p style="margin:0;">{escape(order.address)}</p>
-        <p style="margin:0;">{escape(order.city)}</p>
-        <p style="margin:0;">{escape(order.postal_code)}</p>
-      </div>
-
-      <h3 style="margin:0 0 18px; font-size:32px; font-style:italic; font-weight:500;">Products Ordered</h3>
-      <table style="border-collapse:collapse; width:100%; max-width:560px; margin:0 0 34px;">
+      <h3 style="margin:0 0 18px; font-size:24px; font-style:italic; font-weight:500;">Products Ordered</h3>
+      <table style="border-collapse:collapse; width:100%; max-width:760px; margin:0 0 34px;">
         <thead>
           <tr>
-            <th style="border:1px solid #808080; background:#e9e9e9; padding:6px 8px; text-align:left; font-weight:400;">Product Name</th>
-            <th style="border:1px solid #808080; background:#e9e9e9; padding:6px 8px; text-align:left; font-weight:400;">Quantity</th>
-            <th style="border:1px solid #808080; background:#e9e9e9; padding:6px 8px; text-align:left; font-weight:400;">Price</th>
+            <th style="border:1px solid #808080; background:#e9e9e9; padding:8px 10px; text-align:left; font-weight:600;">Product Name</th>
+            <th style="border:1px solid #808080; background:#e9e9e9; padding:8px 10px; text-align:left; font-weight:600;">Quantity</th>
+            <th style="border:1px solid #808080; background:#e9e9e9; padding:8px 10px; text-align:left; font-weight:600;">Price</th>
           </tr>
         </thead>
         <tbody>
@@ -163,15 +242,9 @@ def _message_html(order: Order, recipient_label: str, is_admin: bool) -> str:
         </tbody>
       </table>
 
-      <h3 style="margin:0 0 18px; font-size:32px; font-style:italic; font-weight:500;">Payment Information</h3>
-      <div style="margin:0 0 28px;">
-        <p style="margin:0;">Payment Method: {escape(_payment_label(order.payment_method))}</p>
-        <p style="margin:0;">Total Amount: {escape(_format_pounds(order.total_amount))}</p>
-      </div>
-
       <p style="margin:0 0 28px;">Delivery will be made within the estimated delivery timeframe for your order.<br />If anything changes, you will be notified.</p>
 
-      <h3 style="margin:0 0 18px; font-size:32px; font-style:italic; font-weight:500;">Important</h3>
+      <h3 style="margin:0 0 18px; font-size:24px; font-style:italic; font-weight:500;">Important</h3>
       <p style="margin:0;">If any of the above information is incorrect, please contact Reve Living as soon as possible.</p>
       <p style="margin:0;">Email: {escape(COMPANY_SUPPORT_EMAIL)}</p>
       <p style="margin:0;">Phone: {escape(COMPANY_PHONE)}</p>
