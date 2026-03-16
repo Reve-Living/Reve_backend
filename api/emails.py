@@ -86,6 +86,20 @@ def _append_unique(parts: list[str], seen: set[str], value: str) -> None:
     parts.append(cleaned)
 
 
+def _is_displayable_order_part(value: str) -> bool:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return False
+    lower = cleaned.lower()
+    if "dimension" in lower:
+        return False
+    if re.search(r"(^|\b)(length|width|height|headboard height|bed height)\s*:", lower):
+        return False
+    if re.search(r"(cm|inch|inches|\")", lower) and re.search(r"(length|width|height)", lower):
+        return False
+    return True
+
+
 def _normalized_style_parts(style_summary: str) -> list[str]:
     parts: list[str] = []
     seen: set[str] = set()
@@ -93,7 +107,7 @@ def _normalized_style_parts(style_summary: str) -> list[str]:
         cleaned = raw_part.strip()
         if not cleaned:
             continue
-        if "dimension" in cleaned.lower():
+        if not _is_displayable_order_part(cleaned):
             continue
         _append_unique(parts, seen, cleaned)
     return parts
