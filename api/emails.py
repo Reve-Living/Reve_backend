@@ -100,6 +100,27 @@ def _is_displayable_order_part(value: str) -> bool:
     return True
 
 
+def _order_part_rank(value: str) -> int:
+    lower = str(value or "").strip().lower()
+    if lower.startswith("size:"):
+        return 1
+    if lower.startswith("colour:") or lower.startswith("color:"):
+        return 2
+    if lower.startswith("fabric:"):
+        return 3
+    if "storage" in lower:
+        return 4
+    if "headboard" in lower:
+        return 5
+    if lower.startswith("mattress"):
+        return 6
+    return 99
+
+
+def _sort_order_parts(parts: list[str]) -> list[str]:
+    return sorted(parts, key=lambda part: (_order_part_rank(part), part.lower()))
+
+
 def _normalized_style_parts(style_summary: str) -> list[str]:
     parts: list[str] = []
     seen: set[str] = set()
@@ -110,7 +131,7 @@ def _normalized_style_parts(style_summary: str) -> list[str]:
         if not _is_displayable_order_part(cleaned):
             continue
         _append_unique(parts, seen, cleaned)
-    return parts
+    return _sort_order_parts(parts)
 
 
 def _item_description_html(order: Order) -> str:
@@ -131,7 +152,7 @@ def _item_description_html(order: Order) -> str:
                     _append_unique(parts, seen, f"Extras: {_format_pounds(item.extras_total)}")
             except (TypeError, ValueError):
                 pass
-        lines.append(" | ".join(parts))
+        lines.append(" | ".join(_sort_order_parts(parts)))
     return "<br /><br />".join(escape(line) for line in lines) if lines else "No products found."
 
 
