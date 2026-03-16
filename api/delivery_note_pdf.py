@@ -57,6 +57,31 @@ def _format_money(value) -> str:
         return f"GBP {value}"
 
 
+def _append_unique(parts: list[str], seen: set[str], value: str) -> None:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return
+    key = cleaned.lower()
+    if key in seen:
+        return
+    seen.add(key)
+    parts.append(cleaned)
+
+
+def _normalized_style_parts(style_summary: str) -> list[str]:
+    parts: list[str] = []
+    seen: set[str] = set()
+    for raw_part in str(style_summary or "").split("|"):
+        cleaned = raw_part.strip()
+        if not cleaned:
+            continue
+        lower = cleaned.lower()
+        if "dimension" in lower:
+            continue
+        _append_unique(parts, seen, cleaned)
+    return parts
+
+
 def _payment_label(method: str) -> str:
     return {
         "cod": "Cash on Delivery",
@@ -156,25 +181,17 @@ def _order_item_summary(order: Order) -> str:
     for item in order.items.select_related("product").all():
         product_name = item.product.name if item.product else f"Product #{item.product_id or 'Unknown'}"
         parts = [f"{item.quantity}x {product_name}"]
+        seen = {parts[0].lower()}
         if item.size:
-            parts.append(f"Size: {item.size}")
+            _append_unique(parts, seen, f"Size: {item.size}")
         if item.color:
-            parts.append(f"Colour: {item.color}")
-        if item.style:
-            parts.append(f"Style: {item.style}")
-        if item.dimension and item.include_dimension:
-            detail = item.dimension
-            if item.dimension_details:
-                detail = f"{detail} ({item.dimension_details})"
-            parts.append(f"Dimensions: {detail}")
-        if item.selected_variants:
-            variant_parts = [f"{key}: {value}" for key, value in item.selected_variants.items() if value]
-            if variant_parts:
-                parts.append(", ".join(variant_parts))
+            _append_unique(parts, seen, f"Colour: {item.color}")
+        for style_part in _normalized_style_parts(item.style):
+            _append_unique(parts, seen, style_part)
         if item.extras_total:
             try:
                 if float(item.extras_total) > 0:
-                    parts.append(f"Extras: {_format_money(item.extras_total)}")
+                    _append_unique(parts, seen, f"Extras: {_format_money(item.extras_total)}")
             except (TypeError, ValueError):
                 pass
         lines.append(" | ".join(parts))
