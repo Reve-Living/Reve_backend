@@ -410,7 +410,11 @@ class ProductListSerializer(serializers.ModelSerializer):
 
 
 class ProductWriteSerializer(serializers.ModelSerializer):
-    slug = serializers.CharField(required=False, allow_blank=True, max_length=50)
+    slug = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=Product._meta.get_field("slug").max_length or 255,
+    )
     images = ProductImageSerializer(many=True, required=False)
     videos = ProductVideoSerializer(many=True, required=False)
     colors = ProductColorSerializer(many=True, required=False)
