@@ -36,6 +36,7 @@ class Collection(models.Model):
     slug = models.SlugField(unique=True, max_length=255)
     description = models.TextField(blank=True)
     image = models.URLField(max_length=1000, blank=True)
+    is_featured = models.BooleanField(default=False)
     sort_order = models.IntegerField(default=0)
     products = models.ManyToManyField("Product", related_name="collections", blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

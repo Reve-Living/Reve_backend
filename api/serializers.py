@@ -644,6 +644,7 @@ class CollectionSerializer(serializers.ModelSerializer):
             "slug",
             "description",
             "image",
+            "is_featured",
             "sort_order",
             "created_at",
             "updated_at",
