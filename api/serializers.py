@@ -27,6 +27,31 @@ from .models import (
     DimensionRow,
 )
 
+def _clean_text(value, fallback=""):
+    text = str(value or "").strip()
+    return text or fallback
+
+
+def _build_unique_slug(model, raw_value, instance=None, fallback="item", extra_filters=None):
+    max_length = model._meta.get_field("slug").max_length or 255
+    base_slug = (slugify(raw_value) or fallback)[:max_length]
+    slug = base_slug
+    suffix = 2
+
+    queryset = model.objects.all()
+    if extra_filters:
+      queryset = queryset.filter(**extra_filters)
+    if instance:
+      queryset = queryset.exclude(pk=instance.pk)
+
+    while queryset.filter(slug=slug).exists():
+      suffix_text = f"-{suffix}"
+      truncated = base_slug[: max_length - len(suffix_text)]
+      slug = f"{truncated}{suffix_text}"
+      suffix += 1
+
+    return slug
+
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -47,6 +72,27 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 class SubCategorySerializer(serializers.ModelSerializer):
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        instance = getattr(self, "instance", None)
+        raw_name = attrs.get("name", getattr(instance, "name", ""))
+        raw_slug = attrs.get("slug")
+
+        attrs["name"] = _clean_text(raw_name)
+        if not attrs["name"]:
+            raise serializers.ValidationError({"name": "Name is required"})
+
+        if raw_slug is None and instance and instance.slug:
+            attrs["slug"] = instance.slug
+        else:
+            attrs["slug"] = _build_unique_slug(
+                SubCategory,
+                raw_slug or attrs["name"],
+                instance=instance,
+                fallback="subcategory",
+            )
+        return attrs
+
     class Meta:
         model = SubCategory
         fields = "__all__"
@@ -54,6 +100,27 @@ class SubCategorySerializer(serializers.ModelSerializer):
 
 class CategorySerializer(serializers.ModelSerializer):
     subcategories = SubCategorySerializer(many=True, read_only=True)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        instance = getattr(self, "instance", None)
+        raw_name = attrs.get("name", getattr(instance, "name", ""))
+        raw_slug = attrs.get("slug")
+
+        attrs["name"] = _clean_text(raw_name)
+        if not attrs["name"]:
+            raise serializers.ValidationError({"name": "Name is required"})
+
+        if raw_slug is None and instance and instance.slug:
+            attrs["slug"] = instance.slug
+        else:
+            attrs["slug"] = _build_unique_slug(
+                Category,
+                raw_slug or attrs["name"],
+                instance=instance,
+                fallback="category",
+            )
+        return attrs
 
     class Meta:
         model = Category
@@ -193,6 +260,27 @@ class DimensionRowSerializer(serializers.ModelSerializer):
 
 class DimensionTemplateSerializer(serializers.ModelSerializer):
     rows = DimensionRowSerializer(many=True, read_only=True)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        instance = getattr(self, "instance", None)
+        raw_name = attrs.get("name", getattr(instance, "name", ""))
+        raw_slug = attrs.get("slug")
+
+        attrs["name"] = _clean_text(raw_name)
+        if not attrs["name"]:
+            raise serializers.ValidationError({"name": "Name is required"})
+
+        if raw_slug is None and instance and instance.slug:
+            attrs["slug"] = instance.slug
+        else:
+            attrs["slug"] = _build_unique_slug(
+                DimensionTemplate,
+                raw_slug or attrs["name"],
+                instance=instance,
+                fallback="template",
+            )
+        return attrs
 
     class Meta:
         model = DimensionTemplate
@@ -604,37 +692,26 @@ class CollectionSerializer(serializers.ModelSerializer):
     products = serializers.PrimaryKeyRelatedField(many=True, queryset=Product.objects.all(), required=False)
     products_data = ProductSerializer(source="products", many=True, read_only=True)
 
-    def _unique_slug(self, base_slug: str) -> str:
-        """
-        Ensure the slug is unique by appending a numeric suffix when needed.
-        This prevents DB-level IntegrityError on duplicate slugs.
-        """
-        slug = base_slug
-        suffix = 2
-        qs = Collection.objects.all()
-        if self.instance:
-            qs = qs.exclude(pk=self.instance.pk)
-        while qs.filter(slug=slug).exists():
-            slug = f"{base_slug}-{suffix}"
-            suffix += 1
-        return slug
-
     def validate(self, attrs):
+        attrs = super().validate(attrs)
         instance = getattr(self, "instance", None)
-        # If a slug is explicitly provided, trust it; otherwise derive from name.
         raw_slug = attrs.get("slug")
         name_for_slug = attrs.get("name") or (instance.name if instance else None)
+        attrs["name"] = _clean_text(attrs.get("name", getattr(instance, "name", "")))
 
-        if raw_slug is None and instance:
-            # No incoming slug and we are updating: keep current slug
-            return super().validate(attrs)
+        if not attrs["name"]:
+            raise serializers.ValidationError({"name": "Name is required"})
 
-        base_slug = slugify(raw_slug or name_for_slug or "")
-        if not base_slug:
-            raise serializers.ValidationError({"slug": "Slug or name is required to generate slug"})
-
-        attrs["slug"] = self._unique_slug(base_slug)
-        return super().validate(attrs)
+        if raw_slug is None and instance and instance.slug:
+            attrs["slug"] = instance.slug
+        else:
+            attrs["slug"] = _build_unique_slug(
+                Collection,
+                raw_slug or name_for_slug or attrs["name"],
+                instance=instance,
+                fallback="collection",
+            )
+        return attrs
 
     class Meta:
         model = Collection
@@ -690,7 +767,7 @@ class HeroSlideSerializer(serializers.ModelSerializer):
             if subcategory:
                 attrs["cta_link"] = existing_cta or f"/category/{subcategory.category.slug}?sub={subcategory.slug}"
             elif category:
-                attrs["cta_link"] = existing_cta or f"/category/{category.slug}"
+                attrs["cta_link"] = existing_cta or f"/category/{category.slug}/subcategories"
             else:
                 attrs["cta_link"] = existing_cta
         return attrs
@@ -758,6 +835,28 @@ class FilterOptionSerializer(serializers.ModelSerializer):
             'metadata',
             'product_count',
         ]
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        raw_name = attrs.get("name", getattr(self.instance, "name", ""))
+        raw_slug = attrs.get("slug", getattr(self.instance, "slug", ""))
+        filter_type = attrs.get("filter_type") or getattr(self.instance, "filter_type", None)
+
+        cleaned_name = _clean_text(raw_name)
+        cleaned_slug = _build_unique_slug(
+            FilterOption,
+            raw_slug or cleaned_name,
+            instance=getattr(self, "instance", None),
+            fallback="option",
+            extra_filters={"filter_type": filter_type} if filter_type else None,
+        )
+
+        if not cleaned_name:
+            raise serializers.ValidationError({"name": "Name is required"})
+
+        attrs["name"] = cleaned_name
+        attrs["slug"] = cleaned_slug
+        return attrs
     
     def get_product_count(self, obj):
         # This will be computed based on current category context
@@ -770,6 +869,26 @@ class FilterTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = FilterType
         fields = ['id', 'name', 'slug', 'display_type', 'icon_url', 'display_hint', 'is_default', 'is_expanded_by_default', 'options']
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        raw_name = attrs.get("name", getattr(self.instance, "name", ""))
+        raw_slug = attrs.get("slug", getattr(self.instance, "slug", ""))
+
+        cleaned_name = _clean_text(raw_name)
+        cleaned_slug = _build_unique_slug(
+            FilterType,
+            raw_slug or cleaned_name,
+            instance=getattr(self, "instance", None),
+            fallback="filter",
+        )
+
+        if not cleaned_name:
+            raise serializers.ValidationError({"name": "Name is required"})
+
+        attrs["name"] = cleaned_name
+        attrs["slug"] = cleaned_slug
+        return attrs
 
 
 class CategoryFilterSerializer(serializers.ModelSerializer):
