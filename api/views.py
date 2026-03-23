@@ -168,9 +168,19 @@ class CategoryViewSet(viewsets.ModelViewSet):
         cache.clear()
 
     @method_decorator(cache_page(60 * 5))
-    def list(self, request, *args, **kwargs):
-        """Cache category list for 5 minutes to avoid DB thrash and slow responses."""
+    def _cached_list(self, request, *args, **kwargs):
+        """Public storefront reads can be cached briefly to reduce repeated load."""
         return super().list(request, *args, **kwargs)
+
+    def list(self, request, *args, **kwargs):
+        """
+        Keep admin category management fully fresh.
+        Staff/admin requests should never wait behind a stale 5-minute cache window.
+        """
+        has_auth_header = bool(request.headers.get("Authorization"))
+        if getattr(request.user, "is_staff", False) or has_auth_header:
+            return super().list(request, *args, **kwargs)
+        return self._cached_list(request, *args, **kwargs)
 
     def get_queryset(self):
         queryset = super().get_queryset()
