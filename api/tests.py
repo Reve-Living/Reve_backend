@@ -151,6 +151,35 @@ class CategorySortOrderSwapTests(TestCase):
 
 
 class ProductSortOrderSwapTests(TestCase):
+    def test_product_list_places_positive_sort_order_before_zero(self):
+        client = APIClient()
+        category = Category.objects.create(name="Beds", slug="beds", sort_order=1)
+
+        Product.objects.create(
+            name="Zero Order Bed",
+            slug="zero-order-bed",
+            category=category,
+            price="499.99",
+            short_description="Zero",
+            description="Zero order description",
+            sort_order=0,
+        )
+        prioritized = Product.objects.create(
+            name="Priority Bed",
+            slug="priority-bed",
+            category=category,
+            price="599.99",
+            short_description="Priority",
+            description="Priority order description",
+            sort_order=1,
+        )
+
+        response = client.get(f"/api/products/?category={category.slug}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(len(response.data), 2)
+        self.assertEqual(response.data[0]["id"], prioritized.id)
+
     def test_creating_product_sort_order_swaps_with_existing_product(self):
         client = APIClient()
         admin_user = User.objects.create_user(
