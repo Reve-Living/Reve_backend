@@ -1,4 +1,5 @@
 from django.contrib.auth.models import User
+from django.db import transaction
 from django.utils.text import slugify
 from rest_framework import serializers
 from .models import (
@@ -125,6 +126,24 @@ class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
         fields = "__all__"
+
+    def update(self, instance, validated_data):
+        new_sort_order = validated_data.get("sort_order", instance.sort_order)
+        old_sort_order = instance.sort_order
+
+        with transaction.atomic():
+            if new_sort_order != old_sort_order:
+                conflicting_category = (
+                    Category.objects.select_for_update()
+                    .filter(sort_order=new_sort_order)
+                    .exclude(pk=instance.pk)
+                    .first()
+                )
+                if conflicting_category:
+                    conflicting_category.sort_order = old_sort_order
+                    conflicting_category.save(update_fields=["sort_order"])
+
+            return super().update(instance, validated_data)
 
 
 

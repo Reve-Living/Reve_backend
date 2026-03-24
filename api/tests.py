@@ -3,6 +3,8 @@ from django.test import TestCase, override_settings
 from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 
+from .models import Category
+
 
 @override_settings(
     EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
@@ -108,3 +110,41 @@ class OrderEmailTests(TestCase):
         self.assertEqual(pdf_response["Content-Type"], "application/pdf")
         self.assertIn("attachment;", pdf_response["Content-Disposition"])
         self.assertTrue(pdf_response.content.startswith(b"%PDF"))
+
+
+class CategorySortOrderSwapTests(TestCase):
+    def test_updating_category_sort_order_swaps_with_existing_category(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin",
+            password="password123",
+            email="admin@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        sofas = Category.objects.create(name="Sofas", slug="sofas", sort_order=3)
+        tables = Category.objects.create(name="Tables", slug="tables", sort_order=5)
+
+        response = client.put(
+            f"/api/categories/{tables.id}/",
+            {
+                "name": "Tables",
+                "slug": "tables",
+                "description": "",
+                "image": "",
+                "show_in_collections": False,
+                "image_alt_text": "",
+                "meta_title": "",
+                "meta_description": "",
+                "sort_order": 3,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        sofas.refresh_from_db()
+        tables.refresh_from_db()
+
+        self.assertEqual(tables.sort_order, 3)
+        self.assertEqual(sofas.sort_order, 5)
