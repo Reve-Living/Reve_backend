@@ -3,7 +3,7 @@ from django.test import TestCase, override_settings
 from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 
-from .models import Category
+from .models import Category, Product
 
 
 @override_settings(
@@ -148,3 +148,138 @@ class CategorySortOrderSwapTests(TestCase):
 
         self.assertEqual(tables.sort_order, 3)
         self.assertEqual(sofas.sort_order, 5)
+
+
+class ProductSortOrderSwapTests(TestCase):
+    def test_creating_product_sort_order_swaps_with_existing_product(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin",
+            password="password123",
+            email="admin@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Beds", slug="beds", sort_order=1)
+        first_product = Product.objects.create(
+            name="Oxford Bed",
+            slug="oxford-bed",
+            category=category,
+            price="499.99",
+            short_description="Oxford",
+            description="Oxford bed description",
+            sort_order=1,
+        )
+
+        response = client.post(
+            "/api/products/",
+            {
+                "name": "Cambridge Bed",
+                "slug": "cambridge-bed",
+                "category": category.id,
+                "subcategory": None,
+                "price": "599.99",
+                "original_price": None,
+                "discount_percentage": 0,
+                "description": "Cambridge bed description",
+                "short_description": "Cambridge",
+                "features": [],
+                "dimensions": [],
+                "dimension_images": [],
+                "show_dimensions_table": True,
+                "faqs": [],
+                "delivery_info": "",
+                "returns_guarantee": "",
+                "delivery_title": "",
+                "returns_title": "",
+                "custom_info_sections": [],
+                "delivery_charges": "0.00",
+                "in_stock": True,
+                "is_bestseller": False,
+                "is_new": False,
+                "show_size_icons": True,
+                "sort_order": 1,
+                "rating": "0.0",
+                "review_count": 0,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        created_product = Product.objects.get(id=response.data["id"])
+        first_product.refresh_from_db()
+
+        self.assertEqual(created_product.sort_order, 1)
+        self.assertEqual(first_product.sort_order, created_product.id)
+
+    def test_updating_product_sort_order_swaps_with_existing_product(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin",
+            password="password123",
+            email="admin@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Beds", slug="beds", sort_order=1)
+        first_product = Product.objects.create(
+            name="Oxford Bed",
+            slug="oxford-bed",
+            category=category,
+            price="499.99",
+            short_description="Oxford",
+            description="Oxford bed description",
+            sort_order=1,
+        )
+        second_product = Product.objects.create(
+            name="Cambridge Bed",
+            slug="cambridge-bed",
+            category=category,
+            price="599.99",
+            short_description="Cambridge",
+            description="Cambridge bed description",
+            sort_order=5,
+        )
+
+        response = client.put(
+            f"/api/products/{second_product.id}/",
+            {
+                "name": second_product.name,
+                "slug": second_product.slug,
+                "category": category.id,
+                "subcategory": None,
+                "price": "599.99",
+                "original_price": None,
+                "discount_percentage": 0,
+                "description": second_product.description,
+                "short_description": second_product.short_description,
+                "features": [],
+                "dimensions": [],
+                "dimension_images": [],
+                "show_dimensions_table": True,
+                "faqs": [],
+                "delivery_info": "",
+                "returns_guarantee": "",
+                "delivery_title": "",
+                "returns_title": "",
+                "custom_info_sections": [],
+                "delivery_charges": "0.00",
+                "in_stock": True,
+                "is_bestseller": False,
+                "is_new": False,
+                "show_size_icons": True,
+                "sort_order": 1,
+                "rating": "0.0",
+                "review_count": 0,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        first_product.refresh_from_db()
+        second_product.refresh_from_db()
+
+        self.assertEqual(second_product.sort_order, 1)
+        self.assertEqual(first_product.sort_order, 5)

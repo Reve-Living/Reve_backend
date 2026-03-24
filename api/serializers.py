@@ -671,18 +671,49 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         # Internal helper used by the view; not a Product model field.
         validated_data.pop("_dimension_template_obj", None)
         filter_values = validated_data.pop("filter_values", [])
-        product = super().create(validated_data)
-        self._sync_filter_values(product, filter_values)
-        return product
+        new_sort_order = validated_data.get("sort_order", 0)
+
+        with transaction.atomic():
+            conflicting_product = (
+                Product.objects.select_for_update()
+                .filter(sort_order=new_sort_order)
+                .order_by("-created_at", "-id")
+                .first()
+            )
+
+            product = super().create(validated_data)
+
+            if conflicting_product:
+                conflicting_product.sort_order = product.id
+                conflicting_product.save(update_fields=["sort_order"])
+
+            self._sync_filter_values(product, filter_values)
+            return product
 
     def update(self, instance, validated_data):
         # Internal helper used by the view; not a Product model field.
         validated_data.pop("_dimension_template_obj", None)
         filter_values = validated_data.pop("filter_values", None)
-        product = super().update(instance, validated_data)
-        if filter_values is not None:
-          self._sync_filter_values(product, filter_values)
-        return product
+        new_sort_order = validated_data.get("sort_order", instance.sort_order)
+        old_sort_order = instance.sort_order
+
+        with transaction.atomic():
+            if new_sort_order != old_sort_order:
+                conflicting_product = (
+                    Product.objects.select_for_update()
+                    .filter(sort_order=new_sort_order)
+                    .exclude(pk=instance.pk)
+                    .order_by("-created_at", "-id")
+                    .first()
+                )
+                if conflicting_product:
+                    conflicting_product.sort_order = old_sort_order
+                    conflicting_product.save(update_fields=["sort_order"])
+
+            product = super().update(instance, validated_data)
+            if filter_values is not None:
+                self._sync_filter_values(product, filter_values)
+            return product
 
     def _sync_filter_values(self, product, filter_values):
         if filter_values is None:
