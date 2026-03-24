@@ -521,11 +521,9 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         cache.clear()
 
-    @method_decorator(cache_page(60 * 2))
     def list(self, request, *args, **kwargs):
         """
-        Cache list responses per-querystring for 2 minutes.
-        Dramatically reduces repeated category page latency.
+        Return fresh product lists so admin ordering changes are visible immediately.
         """
         return super().list(request, *args, **kwargs)
 
