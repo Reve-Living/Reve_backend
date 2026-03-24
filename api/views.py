@@ -4,7 +4,7 @@ import stripe
 import requests
 from requests.adapters import HTTPAdapter, Retry
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import urljoin
 
 from django.conf import settings
@@ -13,7 +13,7 @@ from django.core.files.base import ContentFile
 from django.contrib.auth.models import User
 from django.utils.text import slugify
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 from django.http import HttpResponse
@@ -49,6 +49,7 @@ from .models import (
     DimensionTemplate,
     ProductDimensionTemplate,
     HeroSlide,
+    Promotion,
 )
 from .serializers import (
     RegisterSerializer,
@@ -60,6 +61,7 @@ from .serializers import (
     ReviewSerializer,
     CollectionSerializer,
     HeroSlideSerializer,
+    PromotionSerializer,
     FilterTypeSerializer,
     FilterOptionSerializer,
     CategoryFilterSerializer,
@@ -69,6 +71,113 @@ from .serializers import (
 )
 from .emails import send_order_confirmation_emails
 from .delivery_note_pdf import build_delivery_note_pdf
+
+
+TWOPLACES = Decimal("0.01")
+
+
+def _as_decimal(value, default="0.00"):
+    if value in (None, ""):
+        return Decimal(default)
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal(default)
+
+
+def _round_money(value: Decimal) -> Decimal:
+    return value.quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+
+
+def _get_live_promotions():
+    today = timezone.localdate()
+    return (
+        Promotion.objects.filter(is_active=True, start_date__lte=today, end_date__gte=today)
+        .prefetch_related("categories", "subcategories")
+        .order_by("sort_order", "start_date", "name")
+    )
+
+
+def _promotion_applies_to_product(promotion: Promotion, product: Product) -> bool:
+    category_ids = [category.id for category in promotion.categories.all()]
+    subcategory_ids = [subcategory.id for subcategory in promotion.subcategories.all()]
+    if not category_ids and not subcategory_ids:
+        return True
+    if product.subcategory_id and product.subcategory_id in subcategory_ids:
+        return True
+    if product.category_id in category_ids:
+        return True
+    return False
+
+
+def _serialize_public_promotion(promotion: Promotion) -> dict:
+    return {
+        "id": promotion.id,
+        "name": promotion.name,
+        "announcement_text": promotion.announcement_text,
+        "discount_percentage": float(promotion.discount_percentage),
+        "start_date": promotion.start_date,
+        "end_date": promotion.end_date,
+        "category_ids": [category.id for category in promotion.categories.all()],
+        "subcategory_ids": [subcategory.id for subcategory in promotion.subcategories.all()],
+    }
+
+
+def _build_promotion_result(*, code: str, items_payload: list[dict]):
+    normalized_code = str(code or "").strip().upper()
+    if not normalized_code:
+        raise ValidationError({"code": "Promo code is required"})
+
+    promotion = _get_live_promotions().filter(code__iexact=normalized_code).first()
+    if not promotion:
+        raise ValidationError({"code": "This promo code is invalid or not active right now"})
+
+    product_ids = [item.get("product_id") for item in items_payload if item.get("product_id")]
+    products = Product.objects.filter(id__in=product_ids).select_related("category", "subcategory")
+    product_lookup = {product.id: product for product in products}
+
+    applicable_subtotal = Decimal("0.00")
+    subtotal = Decimal("0.00")
+    line_results = []
+    applicable_product_ids = set()
+
+    for index, item in enumerate(items_payload):
+        product_id = item.get("product_id")
+        quantity = max(int(item.get("quantity", 1) or 1), 1)
+        unit_price = _as_decimal(item.get("price"))
+        line_subtotal = _round_money(unit_price * quantity)
+        subtotal += line_subtotal
+        product = product_lookup.get(product_id)
+        is_applicable = bool(product and _promotion_applies_to_product(promotion, product))
+        if is_applicable:
+            applicable_subtotal += line_subtotal
+            applicable_product_ids.add(product_id)
+        line_results.append(
+            {
+                "index": index,
+                "product_id": product_id,
+                "quantity": quantity,
+                "unit_price": float(_round_money(unit_price)),
+                "line_subtotal": float(line_subtotal),
+                "is_applicable": is_applicable,
+            }
+        )
+
+    if applicable_subtotal <= Decimal("0.00"):
+        raise ValidationError({"code": "This promo code is not valid for the selected products"})
+
+    discount_percentage = _as_decimal(promotion.discount_percentage)
+    discount_amount = _round_money(applicable_subtotal * discount_percentage / Decimal("100"))
+
+    return {
+        "promotion": promotion,
+        "subtotal": _round_money(subtotal),
+        "applicable_subtotal": _round_money(applicable_subtotal),
+        "discount_amount": discount_amount,
+        "discount_percentage": discount_percentage,
+        "applicable_product_ids": applicable_product_ids,
+        "line_results": line_results,
+    }
 
 
 class HealthCheckView(APIView):
@@ -896,6 +1005,72 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(option).data)
 
 
+class PromotionViewSet(viewsets.ModelViewSet):
+    queryset = Promotion.objects.all().prefetch_related("categories", "subcategories").order_by(
+        "sort_order", "start_date", "name"
+    )
+    serializer_class = PromotionSerializer
+    permission_classes = [IsAdminOrReadOnly]
+    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if getattr(self.request.user, "is_staff", False):
+            return queryset
+        return _get_live_promotions()
+
+    @action(detail=False, methods=["get"], permission_classes=[AllowAny])
+    def announcement(self, request):
+        promotion = _get_live_promotions().exclude(announcement_text="").first()
+        if not promotion:
+            return Response({"text": "", "promotion": None})
+        return Response(
+            {
+                "text": promotion.announcement_text,
+                "promotion": _serialize_public_promotion(promotion),
+            }
+        )
+
+    @action(detail=False, methods=["post"], permission_classes=[AllowAny])
+    def availability(self, request):
+        items_payload = request.data.get("items", []) or []
+        product_ids = [item.get("product_id") for item in items_payload if item.get("product_id")]
+        products = Product.objects.filter(id__in=product_ids).select_related("category", "subcategory")
+        product_lookup = {product.id: product for product in products}
+
+        applicable_promotions = []
+        for promotion in _get_live_promotions():
+            if any(
+                product_lookup.get(item.get("product_id"))
+                and _promotion_applies_to_product(promotion, product_lookup[item.get("product_id")])
+                for item in items_payload
+            ):
+                applicable_promotions.append(_serialize_public_promotion(promotion))
+
+        return Response(
+            {
+                "has_applicable_promotion": bool(applicable_promotions),
+                "promotions": applicable_promotions,
+            }
+        )
+
+    @action(detail=False, methods=["post"], permission_classes=[AllowAny])
+    def validate_code(self, request):
+        items_payload = request.data.get("items", []) or []
+        result = _build_promotion_result(code=request.data.get("code"), items_payload=items_payload)
+        return Response(
+            {
+                "promotion_id": result["promotion"].id,
+                "promotion_name": result["promotion"].name,
+                "code": result["promotion"].code,
+                "discount_percentage": float(result["discount_percentage"]),
+                "discount_amount": float(result["discount_amount"]),
+                "applicable_product_ids": list(result["applicable_product_ids"]),
+                "line_results": result["line_results"],
+            }
+        )
+
+
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all().order_by("-created_at")
     serializer_class = OrderSerializer
@@ -915,6 +1090,26 @@ class OrderViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         data = request.data.copy()
         items = data.pop("items", [])
+        delivery_charges = _round_money(_as_decimal(data.get("delivery_charges", 0)))
+        subtotal = Decimal("0.00")
+        for item in items:
+            quantity = max(int(item.get("quantity", 1) or 1), 1)
+            subtotal += _round_money(_as_decimal(item.get("price")) * quantity)
+
+        promo_code = str(data.get("promo_code", "") or "").strip()
+        promo_name = ""
+        promo_discount_amount = Decimal("0.00")
+        if promo_code:
+            promo_result = _build_promotion_result(code=promo_code, items_payload=items)
+            promo_name = promo_result["promotion"].name
+            promo_discount_amount = promo_result["discount_amount"]
+
+        total_amount = _round_money(subtotal + delivery_charges - promo_discount_amount)
+        data["total_amount"] = str(total_amount)
+        data["delivery_charges"] = str(delivery_charges)
+        data["promo_code"] = promo_code.upper()
+        data["promo_name"] = promo_name
+        data["promo_discount_amount"] = str(promo_discount_amount)
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
         order = serializer.save(user=request.user if request.user.is_authenticated else None)

@@ -241,6 +241,27 @@ class ProductMattress(models.Model):
         return self.name or f"Mattress #{self.id}"
 
 
+class Promotion(models.Model):
+    name = models.CharField(max_length=255)
+    code = models.CharField(max_length=80, unique=True)
+    announcement_text = models.CharField(max_length=255, blank=True, default="")
+    discount_percentage = models.DecimalField(max_digits=5, decimal_places=2)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    categories = models.ManyToManyField(Category, related_name="promotions", blank=True)
+    subcategories = models.ManyToManyField(SubCategory, related_name="promotions", blank=True)
+    is_active = models.BooleanField(default=True)
+    sort_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "start_date", "name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
 class Order(models.Model):
     STATUS_CHOICES = [
         ("pending", "Pending"),
@@ -264,6 +285,9 @@ class Order(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     payment_method = models.CharField(max_length=50)
     payment_id = models.CharField(max_length=255, blank=True)
+    promo_code = models.CharField(max_length=80, blank=True, default="")
+    promo_name = models.CharField(max_length=255, blank=True, default="")
+    promo_discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     special_notes = models.TextField(blank=True, default="")
     reference_images = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

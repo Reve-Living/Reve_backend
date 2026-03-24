@@ -20,6 +20,7 @@ from .models import (
     Review,
     Collection,
     HeroSlide,
+    Promotion,
     FilterType,
     FilterOption,
     CategoryFilter,
@@ -790,6 +791,72 @@ class HeroSlideSerializer(serializers.ModelSerializer):
             else:
                 attrs["cta_link"] = existing_cta
         return attrs
+
+
+class PromotionSerializer(serializers.ModelSerializer):
+    categories = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Category.objects.all(), required=False, allow_null=True
+    )
+    subcategories = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=SubCategory.objects.all(), required=False, allow_null=True
+    )
+    category_names = serializers.SerializerMethodField()
+    subcategory_names = serializers.SerializerMethodField()
+    is_currently_live = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Promotion
+        fields = (
+            "id",
+            "name",
+            "code",
+            "announcement_text",
+            "discount_percentage",
+            "start_date",
+            "end_date",
+            "categories",
+            "subcategories",
+            "category_names",
+            "subcategory_names",
+            "is_active",
+            "is_currently_live",
+            "sort_order",
+            "created_at",
+            "updated_at",
+        )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        instance = getattr(self, "instance", None)
+        start_date = attrs.get("start_date", getattr(instance, "start_date", None))
+        end_date = attrs.get("end_date", getattr(instance, "end_date", None))
+        code = str(attrs.get("code", getattr(instance, "code", "")) or "").strip().upper()
+
+        if not str(attrs.get("name", getattr(instance, "name", "")) or "").strip():
+            raise serializers.ValidationError({"name": "Name is required"})
+        if not code:
+            raise serializers.ValidationError({"code": "Promo code is required"})
+        if start_date and end_date and start_date > end_date:
+            raise serializers.ValidationError({"end_date": "End date must be on or after the start date"})
+
+        attrs["name"] = str(attrs.get("name", getattr(instance, "name", "")) or "").strip()
+        attrs["code"] = code
+        attrs["announcement_text"] = str(
+            attrs.get("announcement_text", getattr(instance, "announcement_text", "")) or ""
+        ).strip()
+        return attrs
+
+    def get_category_names(self, obj):
+        return [category.name for category in obj.categories.all()]
+
+    def get_subcategory_names(self, obj):
+        return [subcategory.name for subcategory in obj.subcategories.all()]
+
+    def get_is_currently_live(self, obj):
+        from django.utils import timezone
+
+        today = timezone.localdate()
+        return bool(obj.is_active and obj.start_date <= today <= obj.end_date)
 
 
 class OrderItemSerializer(serializers.ModelSerializer):

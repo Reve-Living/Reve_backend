@@ -14,6 +14,7 @@ from .models import (
     Review,
     Collection,
     HeroSlide,
+    Promotion,
     FilterType,
     FilterOption,
     CategoryFilter,
@@ -89,7 +90,7 @@ class OrderItemInline(admin.TabularInline):
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    list_display = ("id", "email", "total_amount", "status", "payment_method", "created_at")
+    list_display = ("id", "email", "total_amount", "promo_code", "status", "payment_method", "created_at")
     list_filter = ("status", "payment_method")
     inlines = [OrderItemInline]
     readonly_fields = ("special_notes", "reference_images_preview", "created_at")
@@ -105,7 +106,8 @@ class OrderAdmin(admin.ModelAdmin):
         }),
         ("Payment & Status", {
             "fields": (
-                ("total_amount", "delivery_charges"),
+                ("total_amount", "delivery_charges", "promo_discount_amount"),
+                ("promo_code", "promo_name"),
                 ("status", "payment_method", "payment_id"),
                 "created_at",
             )
@@ -147,6 +149,15 @@ class HeroSlideAdmin(admin.ModelAdmin):
     list_filter = ("is_active", "category")
     search_fields = ("title", "subtitle", "cta_link")
     ordering = ("sort_order", "-updated_at")
+
+
+@admin.register(Promotion)
+class PromotionAdmin(admin.ModelAdmin):
+    list_display = ("name", "code", "discount_percentage", "start_date", "end_date", "is_active", "sort_order")
+    list_filter = ("is_active", "start_date", "end_date")
+    search_fields = ("name", "code", "announcement_text")
+    filter_horizontal = ("categories", "subcategories")
+    ordering = ("sort_order", "start_date", "name")
 
 
 # Filter System Admin
