@@ -674,18 +674,8 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         new_sort_order = validated_data.get("sort_order", 0)
 
         with transaction.atomic():
-            conflicting_product = (
-                Product.objects.select_for_update()
-                .filter(sort_order=new_sort_order)
-                .order_by("-created_at", "-id")
-                .first()
-            )
-
             product = super().create(validated_data)
-
-            if conflicting_product:
-                conflicting_product.sort_order = product.id
-                conflicting_product.save(update_fields=["sort_order"])
+            self._reorder_products(product, new_sort_order)
 
             self._sync_filter_values(product, filter_values)
             return product
@@ -695,25 +685,36 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         validated_data.pop("_dimension_template_obj", None)
         filter_values = validated_data.pop("filter_values", None)
         new_sort_order = validated_data.get("sort_order", instance.sort_order)
-        old_sort_order = instance.sort_order
-
         with transaction.atomic():
-            if new_sort_order != old_sort_order:
-                conflicting_product = (
-                    Product.objects.select_for_update()
-                    .filter(sort_order=new_sort_order)
-                    .exclude(pk=instance.pk)
-                    .order_by("-created_at", "-id")
-                    .first()
-                )
-                if conflicting_product:
-                    conflicting_product.sort_order = old_sort_order
-                    conflicting_product.save(update_fields=["sort_order"])
-
             product = super().update(instance, validated_data)
+            self._reorder_products(product, new_sort_order)
             if filter_values is not None:
                 self._sync_filter_values(product, filter_values)
             return product
+
+    def _reorder_products(self, product, requested_sort_order):
+        try:
+            requested_position = int(requested_sort_order)
+        except (TypeError, ValueError):
+            requested_position = 0
+
+        ordered_products = list(
+            Product.objects.select_for_update()
+            .filter(sort_order__gt=0)
+            .exclude(pk=product.pk)
+            .order_by("sort_order", "-created_at", "-id")
+        )
+
+        if requested_position > 0:
+            insert_index = min(requested_position - 1, len(ordered_products))
+            ordered_products.insert(insert_index, product)
+            for index, ordered_product in enumerate(ordered_products, start=1):
+                if ordered_product.sort_order != index:
+                    ordered_product.sort_order = index
+                    ordered_product.save(update_fields=["sort_order"])
+        elif product.sort_order != 0:
+            product.sort_order = 0
+            product.save(update_fields=["sort_order"])
 
     def _sync_filter_values(self, product, filter_values):
         if filter_values is None:

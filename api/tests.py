@@ -240,7 +240,7 @@ class ProductSortOrderSwapTests(TestCase):
         first_product.refresh_from_db()
 
         self.assertEqual(created_product.sort_order, 1)
-        self.assertEqual(first_product.sort_order, created_product.id)
+        self.assertEqual(first_product.sort_order, 2)
 
     def test_updating_product_sort_order_swaps_with_existing_product(self):
         client = APIClient()
@@ -311,4 +311,159 @@ class ProductSortOrderSwapTests(TestCase):
         second_product.refresh_from_db()
 
         self.assertEqual(second_product.sort_order, 1)
-        self.assertEqual(first_product.sort_order, 5)
+        self.assertEqual(first_product.sort_order, 2)
+
+    def test_creating_product_sort_order_uses_requested_position_even_with_gaps(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin2",
+            password="password123",
+            email="admin2@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Beds", slug="beds-gap-create", sort_order=1)
+        first_product = Product.objects.create(
+            name="First Bed",
+            slug="first-bed-gap-create",
+            category=category,
+            price="499.99",
+            short_description="First",
+            description="First bed description",
+            sort_order=1,
+        )
+        third_product = Product.objects.create(
+            name="Third Bed",
+            slug="third-bed-gap-create",
+            category=category,
+            price="699.99",
+            short_description="Third",
+            description="Third bed description",
+            sort_order=3,
+        )
+
+        response = client.post(
+            "/api/products/",
+            {
+                "name": "Second Bed",
+                "slug": "second-bed-gap-create",
+                "category": category.id,
+                "subcategory": None,
+                "price": "599.99",
+                "original_price": None,
+                "discount_percentage": 0,
+                "description": "Second bed description",
+                "short_description": "Second",
+                "features": [],
+                "dimensions": [],
+                "dimension_images": [],
+                "show_dimensions_table": True,
+                "faqs": [],
+                "delivery_info": "",
+                "returns_guarantee": "",
+                "delivery_title": "",
+                "returns_title": "",
+                "custom_info_sections": [],
+                "delivery_charges": "0.00",
+                "in_stock": True,
+                "is_bestseller": False,
+                "is_new": False,
+                "show_size_icons": True,
+                "sort_order": 2,
+                "rating": "0.0",
+                "review_count": 0,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        second_product = Product.objects.get(id=response.data["id"])
+        first_product.refresh_from_db()
+        third_product.refresh_from_db()
+
+        self.assertEqual(first_product.sort_order, 1)
+        self.assertEqual(second_product.sort_order, 2)
+        self.assertEqual(third_product.sort_order, 3)
+
+    def test_updating_product_sort_order_uses_requested_position_even_with_gaps(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin3",
+            password="password123",
+            email="admin3@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Beds", slug="beds-gap-update", sort_order=1)
+        first_product = Product.objects.create(
+            name="First Bed Update",
+            slug="first-bed-gap-update",
+            category=category,
+            price="499.99",
+            short_description="First",
+            description="First bed description",
+            sort_order=1,
+        )
+        moving_product = Product.objects.create(
+            name="Moving Bed Update",
+            slug="moving-bed-gap-update",
+            category=category,
+            price="599.99",
+            short_description="Moving",
+            description="Moving bed description",
+            sort_order=5,
+        )
+        trailing_product = Product.objects.create(
+            name="Trailing Bed Update",
+            slug="trailing-bed-gap-update",
+            category=category,
+            price="699.99",
+            short_description="Trailing",
+            description="Trailing bed description",
+            sort_order=9,
+        )
+
+        response = client.put(
+            f"/api/products/{trailing_product.id}/",
+            {
+                "name": trailing_product.name,
+                "slug": trailing_product.slug,
+                "category": category.id,
+                "subcategory": None,
+                "price": "699.99",
+                "original_price": None,
+                "discount_percentage": 0,
+                "description": trailing_product.description,
+                "short_description": trailing_product.short_description,
+                "features": [],
+                "dimensions": [],
+                "dimension_images": [],
+                "show_dimensions_table": True,
+                "faqs": [],
+                "delivery_info": "",
+                "returns_guarantee": "",
+                "delivery_title": "",
+                "returns_title": "",
+                "custom_info_sections": [],
+                "delivery_charges": "0.00",
+                "in_stock": True,
+                "is_bestseller": False,
+                "is_new": False,
+                "show_size_icons": True,
+                "sort_order": 2,
+                "rating": "0.0",
+                "review_count": 0,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        first_product.refresh_from_db()
+        moving_product.refresh_from_db()
+        trailing_product.refresh_from_db()
+
+        self.assertEqual(first_product.sort_order, 1)
+        self.assertEqual(trailing_product.sort_order, 2)
+        self.assertEqual(moving_product.sort_order, 3)
