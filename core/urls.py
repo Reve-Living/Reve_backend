@@ -24,5 +24,6 @@ urlpatterns = [
     path('api/', include('api.urls')),
 ]
 
-# Always serve media files from MEDIA_ROOT at MEDIA_URL (needed on Render)
-urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Only mount local media URLs in development when MEDIA_URL is relative.
+if settings.MEDIA_URL.startswith('/'):
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
