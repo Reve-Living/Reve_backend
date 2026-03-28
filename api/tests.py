@@ -386,7 +386,7 @@ class ProductSortOrderSwapTests(TestCase):
         self.assertEqual(second_product.sort_order, 2)
         self.assertEqual(third_product.sort_order, 3)
 
-    def test_updating_product_sort_order_uses_requested_position_even_with_gaps(self):
+    def test_updating_product_sort_order_keeps_requested_position_even_with_gaps(self):
         client = APIClient()
         admin_user = User.objects.create_user(
             username="admin3",
@@ -466,4 +466,186 @@ class ProductSortOrderSwapTests(TestCase):
 
         self.assertEqual(first_product.sort_order, 1)
         self.assertEqual(trailing_product.sort_order, 2)
-        self.assertEqual(moving_product.sort_order, 3)
+        self.assertEqual(moving_product.sort_order, 5)
+
+    def test_updating_unsorted_product_allows_direct_gap_position(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin6",
+            password="password123",
+            email="admin6@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Beds", slug="beds-direct-gap-update", sort_order=1)
+        first_product = Product.objects.create(
+            name="Gapless Bed One",
+            slug="gapless-bed-one",
+            category=category,
+            price="499.99",
+            short_description="One",
+            description="Gapless one description",
+            sort_order=0,
+        )
+        second_product = Product.objects.create(
+            name="Gapless Bed Two",
+            slug="gapless-bed-two",
+            category=category,
+            price="599.99",
+            short_description="Two",
+            description="Gapless two description",
+            sort_order=0,
+        )
+
+        response = client.patch(
+            f"/api/products/{first_product.id}/",
+            {"sort_order": 5},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        first_product.refresh_from_db()
+        second_product.refresh_from_db()
+
+        self.assertEqual(first_product.sort_order, 5)
+        self.assertEqual(second_product.sort_order, 0)
+
+    def test_creating_product_allows_direct_gap_position(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin7",
+            password="password123",
+            email="admin7@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Beds", slug="beds-direct-gap-create", sort_order=1)
+
+        response = client.post(
+            "/api/products/",
+            {
+                "name": "Direct Gap Bed",
+                "slug": "direct-gap-bed",
+                "category": category.id,
+                "subcategory": None,
+                "price": "599.99",
+                "original_price": None,
+                "discount_percentage": 0,
+                "description": "Direct gap bed description",
+                "short_description": "Direct gap",
+                "features": [],
+                "dimensions": [],
+                "dimension_images": [],
+                "show_dimensions_table": True,
+                "faqs": [],
+                "delivery_info": "",
+                "returns_guarantee": "",
+                "delivery_title": "",
+                "returns_title": "",
+                "custom_info_sections": [],
+                "delivery_charges": "0.00",
+                "in_stock": True,
+                "is_bestseller": False,
+                "is_new": False,
+                "show_size_icons": True,
+                "sort_order": 6,
+                "rating": "0.0",
+                "review_count": 0,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        created_product = Product.objects.get(id=response.data["id"])
+        self.assertEqual(created_product.sort_order, 6)
+
+    def test_updating_product_sort_order_shifts_intermediate_products_when_moving_later(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin4",
+            password="password123",
+            email="admin4@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Beds", slug="beds-shift-later", sort_order=1)
+        products = []
+        for index in range(1, 7):
+            products.append(
+                Product.objects.create(
+                    name=f"Bed {index}",
+                    slug=f"bed-shift-later-{index}",
+                    category=category,
+                    price="499.99",
+                    short_description=f"Bed {index}",
+                    description=f"Bed {index} description",
+                    sort_order=index,
+                )
+            )
+
+        moving_product = products[0]
+
+        response = client.patch(
+            f"/api/products/{moving_product.id}/",
+            {"sort_order": 5},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        for product in products:
+            product.refresh_from_db()
+
+        self.assertEqual(products[1].sort_order, 1)
+        self.assertEqual(products[2].sort_order, 2)
+        self.assertEqual(products[3].sort_order, 3)
+        self.assertEqual(products[4].sort_order, 4)
+        self.assertEqual(moving_product.sort_order, 5)
+        self.assertEqual(products[5].sort_order, 6)
+
+    def test_updating_product_sort_order_shifts_intermediate_products_when_moving_to_later_gap(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin5",
+            password="password123",
+            email="admin5@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Beds", slug="beds-shift-gap", sort_order=1)
+        products = []
+        for index in range(1, 15):
+            products.append(
+                Product.objects.create(
+                    name=f"Gap Bed {index}",
+                    slug=f"bed-shift-gap-{index}",
+                    category=category,
+                    price="499.99",
+                    short_description=f"Gap Bed {index}",
+                    description=f"Gap Bed {index} description",
+                    sort_order=index,
+                )
+            )
+
+        moving_product = products[4]
+
+        response = client.patch(
+            f"/api/products/{moving_product.id}/",
+            {"sort_order": 14},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        for product in products:
+            product.refresh_from_db()
+
+        self.assertEqual(products[5].sort_order, 5)
+        self.assertEqual(products[6].sort_order, 6)
+        self.assertEqual(products[12].sort_order, 12)
+        self.assertEqual(products[13].sort_order, 13)
+        self.assertEqual(moving_product.sort_order, 14)

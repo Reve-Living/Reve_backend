@@ -675,7 +675,7 @@ class ProductWriteSerializer(serializers.ModelSerializer):
 
         with transaction.atomic():
             product = super().create(validated_data)
-            self._reorder_products(product, new_sort_order)
+            self._reorder_products(product, new_sort_order, previous_sort_order=0)
 
             self._sync_filter_values(product, filter_values)
             return product
@@ -684,19 +684,25 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         # Internal helper used by the view; not a Product model field.
         validated_data.pop("_dimension_template_obj", None)
         filter_values = validated_data.pop("filter_values", None)
+        previous_sort_order = instance.sort_order
         new_sort_order = validated_data.get("sort_order", instance.sort_order)
         with transaction.atomic():
             product = super().update(instance, validated_data)
-            self._reorder_products(product, new_sort_order)
+            self._reorder_products(product, new_sort_order, previous_sort_order=previous_sort_order)
             if filter_values is not None:
                 self._sync_filter_values(product, filter_values)
             return product
 
-    def _reorder_products(self, product, requested_sort_order):
+    def _reorder_products(self, product, requested_sort_order, previous_sort_order=0):
         try:
-            requested_position = int(requested_sort_order)
+            requested_position = max(int(requested_sort_order), 0)
         except (TypeError, ValueError):
             requested_position = 0
+
+        try:
+            previous_position = max(int(previous_sort_order), 0)
+        except (TypeError, ValueError):
+            previous_position = 0
 
         ordered_products = list(
             Product.objects.select_for_update()
@@ -704,17 +710,54 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             .exclude(pk=product.pk)
             .order_by("sort_order", "-created_at", "-id")
         )
+        products_by_order = {ordered_product.sort_order: ordered_product for ordered_product in ordered_products}
+        dirty_products = []
 
-        if requested_position > 0:
-            insert_index = min(requested_position - 1, len(ordered_products))
-            ordered_products.insert(insert_index, product)
-            for index, ordered_product in enumerate(ordered_products, start=1):
-                if ordered_product.sort_order != index:
-                    ordered_product.sort_order = index
-                    ordered_product.save(update_fields=["sort_order"])
-        elif product.sort_order != 0:
-            product.sort_order = 0
-            product.save(update_fields=["sort_order"])
+        def mark_dirty(ordered_product, new_position):
+            if ordered_product.sort_order != new_position:
+                ordered_product.sort_order = new_position
+                dirty_products.append(ordered_product)
+
+        def close_gap(start_position):
+            gap_position = start_position
+            while True:
+                next_position = gap_position + 1
+                next_product = products_by_order.pop(next_position, None)
+                if not next_product:
+                    break
+                mark_dirty(next_product, gap_position)
+                products_by_order[gap_position] = next_product
+                gap_position = next_position
+
+        def open_slot(start_position):
+            if start_position <= 0 or start_position not in products_by_order:
+                return
+
+            end_position = start_position
+            while end_position + 1 in products_by_order:
+                end_position += 1
+
+            for current_position in range(end_position, start_position - 1, -1):
+                current_product = products_by_order.pop(current_position)
+                new_position = current_position + 1
+                mark_dirty(current_product, new_position)
+                products_by_order[new_position] = current_product
+
+        if previous_position > 0:
+            close_gap(previous_position)
+
+        if requested_position <= 0:
+            if product.sort_order != 0:
+                product.sort_order = 0
+                product.save(update_fields=["sort_order"])
+        else:
+            open_slot(requested_position)
+            if product.sort_order != requested_position:
+                product.sort_order = requested_position
+                product.save(update_fields=["sort_order"])
+
+        if dirty_products:
+            Product.objects.bulk_update(dirty_products, ["sort_order"])
 
     def _sync_filter_values(self, product, filter_values):
         if filter_values is None:
