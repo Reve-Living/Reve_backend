@@ -13,7 +13,7 @@ from django.core.files.base import ContentFile
 from django.contrib.auth.models import User
 from django.utils.text import slugify
 from django.db import transaction
-from django.db.models import Prefetch, Q, Case, When, Value, IntegerField
+from django.db.models import Prefetch, Q
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 from django.http import HttpResponse
@@ -513,15 +513,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                     filter_values__filter_option__filter_type=ft
                 ).distinct()
         
-        queryset = queryset.annotate(
-            display_sort_order=Case(
-                When(sort_order__gt=0, then="sort_order"),
-                default=Value(2147483647),
-                output_field=IntegerField(),
-            )
-        )
-
-        return queryset.order_by("display_sort_order", "-created_at")
+        return queryset.order_by("sort_order", "-created_at")
 
     def _invalidate_cache(self):
         """Drop cached product lists after admin changes."""

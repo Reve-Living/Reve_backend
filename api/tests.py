@@ -151,7 +151,7 @@ class CategorySortOrderSwapTests(TestCase):
 
 
 class ProductSortOrderSwapTests(TestCase):
-    def test_product_list_places_positive_sort_order_before_zero(self):
+    def test_product_list_places_zero_sort_order_before_positive(self):
         client = APIClient()
         category = Category.objects.create(name="Beds", slug="beds", sort_order=1)
 
@@ -178,7 +178,7 @@ class ProductSortOrderSwapTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertGreaterEqual(len(response.data), 2)
-        self.assertEqual(response.data[0]["id"], prioritized.id)
+        self.assertEqual(response.data[0]["slug"], "zero-order-bed")
 
     def test_creating_product_sort_order_swaps_with_existing_product(self):
         client = APIClient()
@@ -649,3 +649,55 @@ class ProductSortOrderSwapTests(TestCase):
         self.assertEqual(products[12].sort_order, 12)
         self.assertEqual(products[13].sort_order, 13)
         self.assertEqual(moving_product.sort_order, 14)
+
+    def test_updating_product_sort_order_uses_absolute_position_within_subcategory(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin6",
+            password="password123",
+            email="admin6@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Tables", slug="tables-absolute-position", sort_order=1)
+        subcategory = SubCategory.objects.create(
+            name="Coffee Tables",
+            slug="coffee-tables-absolute-position",
+            category=category,
+            sort_order=1,
+        )
+
+        products = []
+        for index in range(1, 25):
+            products.append(
+                Product.objects.create(
+                    name=f"Table {index}",
+                    slug=f"table-absolute-position-{index}",
+                    category=category,
+                    subcategory=subcategory,
+                    price="199.99",
+                    short_description=f"Table {index}",
+                    description=f"Table {index} description",
+                    sort_order=0,
+                )
+            )
+
+        moving_product = products[0]
+
+        response = client.patch(
+            f"/api/products/{moving_product.id}/",
+            {"sort_order": 23},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        ordered_ids = list(
+            Product.objects.filter(category=category, subcategory=subcategory)
+            .order_by("sort_order", "-created_at", "-id")
+            .values_list("id", flat=True)
+        )
+
+        self.assertEqual(len(ordered_ids), 24)
+        self.assertEqual(ordered_ids[22], moving_product.id)

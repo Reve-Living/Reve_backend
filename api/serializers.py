@@ -699,62 +699,25 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         except (TypeError, ValueError):
             requested_position = 0
 
-        try:
-            previous_position = max(int(previous_sort_order), 0)
-        except (TypeError, ValueError):
-            previous_position = 0
-
-        ordered_products = list(
-            Product.objects.select_for_update()
-            .filter(sort_order__gt=0)
-            .exclude(pk=product.pk)
-            .order_by("sort_order", "-created_at", "-id")
-        )
-        products_by_order = {ordered_product.sort_order: ordered_product for ordered_product in ordered_products}
-        dirty_products = []
-
-        def mark_dirty(ordered_product, new_position):
-            if ordered_product.sort_order != new_position:
-                ordered_product.sort_order = new_position
-                dirty_products.append(ordered_product)
-
-        def close_gap(start_position):
-            gap_position = start_position
-            while True:
-                next_position = gap_position + 1
-                next_product = products_by_order.pop(next_position, None)
-                if not next_product:
-                    break
-                mark_dirty(next_product, gap_position)
-                products_by_order[gap_position] = next_product
-                gap_position = next_position
-
-        def open_slot(start_position):
-            if start_position <= 0 or start_position not in products_by_order:
-                return
-
-            end_position = start_position
-            while end_position + 1 in products_by_order:
-                end_position += 1
-
-            for current_position in range(end_position, start_position - 1, -1):
-                current_product = products_by_order.pop(current_position)
-                new_position = current_position + 1
-                mark_dirty(current_product, new_position)
-                products_by_order[new_position] = current_product
-
-        if previous_position > 0:
-            close_gap(previous_position)
-
         if requested_position <= 0:
             if product.sort_order != 0:
                 product.sort_order = 0
                 product.save(update_fields=["sort_order"])
-        else:
-            open_slot(requested_position)
-            if product.sort_order != requested_position:
-                product.sort_order = requested_position
-                product.save(update_fields=["sort_order"])
+            return
+
+        scoped_products = Product.objects.select_for_update().exclude(pk=product.pk).filter(category=product.category)
+        if product.subcategory_id:
+            scoped_products = scoped_products.filter(subcategory_id=product.subcategory_id)
+
+        ordered_products = list(scoped_products.order_by("sort_order", "-created_at", "-id"))
+        insert_at = min(max(requested_position, 1), len(ordered_products) + 1) - 1
+        ordered_products.insert(insert_at, product)
+
+        dirty_products = []
+        for new_position, ordered_product in enumerate(ordered_products, start=1):
+            if ordered_product.sort_order != new_position:
+                ordered_product.sort_order = new_position
+                dirty_products.append(ordered_product)
 
         if dirty_products:
             Product.objects.bulk_update(dirty_products, ["sort_order"])
