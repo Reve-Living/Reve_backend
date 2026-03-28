@@ -559,6 +559,17 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def update(self, request, *args, **kwargs):
         data = request.data.copy()
+        simple_visibility_update = set(data.keys()).issubset({"is_hidden"})
+
+        if simple_visibility_update:
+            instance = self.get_object()
+            serializer = self.get_serializer(instance, data=data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            self._invalidate_cache()
+            refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=instance.pk)
+            return Response(ProductSerializer(refreshed).data)
+
         images = data.pop("images", None)
         videos = data.pop("videos", None)
         colors = data.pop("colors", None)
