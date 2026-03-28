@@ -1140,6 +1140,8 @@ class OrderViewSet(viewsets.ModelViewSet):
                 selected_variants=item.get("selected_variants", {}),
                 extras_total=item.get("extras_total", 0),
                 include_dimension=bool(item.get("include_dimension", True)),
+                assembly_service_selected=bool(item.get("assembly_service_selected", False)),
+                assembly_service_price=item.get("assembly_service_price", 0),
             )
 
         transaction.on_commit(lambda: send_order_confirmation_emails(order.id))

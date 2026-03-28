@@ -44,7 +44,10 @@ def _order_items_rows_text(order: Order) -> str:
     rows: list[str] = []
     for item in order.items.select_related("product").all():
         product_name = item.product.name if item.product else f"Product #{item.product_id or 'Unknown'}"
-        rows.append(f"{product_name} | {item.quantity} | {_format_pounds(item.price)}")
+        assembly_suffix = ""
+        if item.assembly_service_selected:
+            assembly_suffix = f" | Assembly Service: {_format_pounds(item.assembly_service_price)}"
+        rows.append(f"{product_name} | {item.quantity} | {_format_pounds(item.price)}{assembly_suffix}")
     return "\n".join(rows) if rows else "No products found."
 
 
@@ -52,11 +55,14 @@ def _order_items_rows_html(order: Order) -> str:
     rows: list[str] = []
     for item in order.items.select_related("product").all():
         product_name = item.product.name if item.product else f"Product #{item.product_id or 'Unknown'}"
+        price_html = escape(_format_pounds(item.price))
+        if item.assembly_service_selected:
+            price_html = f"{price_html}<br /><span style='font-size:12px; color:#555;'>Assembly: {escape(_format_pounds(item.assembly_service_price))}</span>"
         rows.append(
             "<tr>"
             f"<td style='border:1px solid #808080; padding:6px 8px;'>{escape(product_name)}</td>"
             f"<td style='border:1px solid #808080; padding:6px 8px;'>{item.quantity}</td>"
-            f"<td style='border:1px solid #808080; padding:6px 8px;'>{escape(_format_pounds(item.price))}</td>"
+            f"<td style='border:1px solid #808080; padding:6px 8px;'>{price_html}</td>"
             "</tr>"
         )
     if not rows:
@@ -114,6 +120,8 @@ def _order_part_rank(value: str) -> int:
         return 5
     if lower.startswith("mattress"):
         return 6
+    if lower.startswith("assembly service"):
+        return 7
     return 99
 
 
@@ -152,6 +160,8 @@ def _item_description_html(order: Order) -> str:
                     _append_unique(parts, seen, f"Extras: {_format_pounds(item.extras_total)}")
             except (TypeError, ValueError):
                 pass
+        if item.assembly_service_selected:
+            _append_unique(parts, seen, f"Assembly Service: {_format_pounds(item.assembly_service_price)}")
         lines.append(" | ".join(_sort_order_parts(parts)))
     return "<br /><br />".join(escape(line) for line in lines) if lines else "No products found."
 

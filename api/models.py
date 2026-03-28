@@ -98,6 +98,8 @@ class Product(models.Model):
     returns_title = models.CharField(max_length=150, blank=True, default="")
     custom_info_sections = models.JSONField(default=list, blank=True)  # list of {title, content}
     delivery_charges = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    assembly_service_enabled = models.BooleanField(default=False)
+    assembly_service_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     in_stock = models.BooleanField(default=True)
     is_hidden = models.BooleanField(default=False)
     is_bestseller = models.BooleanField(default=False)
@@ -310,6 +312,8 @@ class OrderItem(models.Model):
     selected_variants = models.JSONField(default=dict, blank=True)
     extras_total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     include_dimension = models.BooleanField(default=True)
+    assembly_service_selected = models.BooleanField(default=False)
+    assembly_service_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
 
 
 class Review(models.Model):

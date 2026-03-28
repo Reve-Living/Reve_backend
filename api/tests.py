@@ -44,6 +44,8 @@ class OrderEmailTests(TestCase):
                     "selected_variants": {"Fabric": "Plush Velvet", "Storage": "Ottoman"},
                     "extras_total": "25.00",
                     "include_dimension": True,
+                    "assembly_service_selected": True,
+                    "assembly_service_price": "49.00",
                 }
             ],
         }
@@ -65,9 +67,14 @@ class OrderEmailTests(TestCase):
         self.assertIn("Ayesha Jahangir", customer_email.body)
         self.assertIn("Product Name | Quantity | Price", customer_email.body)
         self.assertIn("Payment Method: PayPal", customer_email.body)
+        self.assertIn("Assembly Service: £49.00", customer_email.body)
         self.assertIn("Email: support@reveliving.co.uk", customer_email.body)
         self.assertIn("Phone: +44 7386 340475", customer_email.body)
         self.assertEqual(len(customer_email.attachments), 1)
+
+        order_item = response.data["items"][0]
+        self.assertTrue(order_item["assembly_service_selected"])
+        self.assertEqual(order_item["assembly_service_price"], "49.00")
 
     def test_admin_can_download_delivery_note_pdf(self):
         client = APIClient()
