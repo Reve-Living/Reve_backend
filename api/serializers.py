@@ -351,6 +351,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "delivery_charges",
             "dimension_paragraph",
             "in_stock",
+            "is_hidden",
             "is_bestseller",
             "is_new",
             "show_size_icons",
@@ -484,6 +485,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             "original_price",
             "discount_percentage",
             "in_stock",
+            "is_hidden",
             "is_bestseller",
             "is_new",
             "show_size_icons",
@@ -561,6 +563,7 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             "custom_info_sections",
             "delivery_charges",
             "in_stock",
+            "is_hidden",
             "is_bestseller",
             "is_new",
             "show_size_icons",
@@ -793,6 +796,11 @@ class HeroSlideSerializer(serializers.ModelSerializer):
     category_slug = serializers.CharField(source="category.slug", read_only=True)
     subcategory_name = serializers.CharField(source="subcategory.name", read_only=True)
     subcategory_slug = serializers.CharField(source="subcategory.slug", read_only=True)
+    selected_subcategories = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=SubCategory.objects.all(), required=False
+    )
+    selected_subcategory_slugs = serializers.SerializerMethodField()
+    selected_subcategory_names = serializers.SerializerMethodField()
 
     class Meta:
         model = HeroSlide
@@ -806,6 +814,9 @@ class HeroSlideSerializer(serializers.ModelSerializer):
             "subcategory",
             "subcategory_name",
             "subcategory_slug",
+            "selected_subcategories",
+            "selected_subcategory_slugs",
+            "selected_subcategory_names",
             "cta_text",
             "cta_link",
             "image",
@@ -815,11 +826,30 @@ class HeroSlideSerializer(serializers.ModelSerializer):
             "updated_at",
         )
 
+    def get_selected_subcategory_slugs(self, obj):
+        return [sub.slug for sub in obj.selected_subcategories.all()]
+
+    def get_selected_subcategory_names(self, obj):
+        return [sub.name for sub in obj.selected_subcategories.all()]
+
     def validate(self, attrs):
         category = attrs.get("category") or getattr(self.instance, "category", None)
         subcategory = attrs.get("subcategory") or getattr(self.instance, "subcategory", None)
         incoming_cta = attrs.get("cta_link")
         existing_cta = getattr(self.instance, "cta_link", "") if hasattr(self, "instance") and self.instance else ""
+        selected_subcategories = attrs.get("selected_subcategories")
+
+        if selected_subcategories is not None and not category and selected_subcategories:
+            raise serializers.ValidationError(
+                {"selected_subcategories": "Choose a category before selecting subcategories for a slide."}
+            )
+
+        if selected_subcategories is not None and category:
+            invalid = [sub.name for sub in selected_subcategories if sub.category_id != category.id]
+            if invalid:
+                raise serializers.ValidationError(
+                    {"selected_subcategories": f"These subcategories do not belong to {category.name}: {', '.join(invalid)}"}
+                )
 
         if (incoming_cta is None or incoming_cta.strip() == ""):
             if subcategory:

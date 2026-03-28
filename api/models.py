@@ -57,6 +57,9 @@ class HeroSlide(models.Model):
     subcategory = models.ForeignKey(
         SubCategory, related_name="hero_slides", on_delete=models.SET_NULL, null=True, blank=True
     )
+    selected_subcategories = models.ManyToManyField(
+        SubCategory, related_name="hero_slides_selected", blank=True
+    )
     cta_text = models.CharField(max_length=120, default="Shop Now")
     cta_link = models.CharField(max_length=1000, blank=True, default="")
     image = models.URLField(max_length=1000)
@@ -96,6 +99,7 @@ class Product(models.Model):
     custom_info_sections = models.JSONField(default=list, blank=True)  # list of {title, content}
     delivery_charges = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     in_stock = models.BooleanField(default=True)
+    is_hidden = models.BooleanField(default=False)
     is_bestseller = models.BooleanField(default=False)
     is_new = models.BooleanField(default=False)
     # Allows per-product control over whether size option icons are displayed

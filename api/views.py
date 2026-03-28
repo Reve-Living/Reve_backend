@@ -415,9 +415,9 @@ class CollectionViewSet(viewsets.ModelViewSet):
 
 
 class HeroSlideViewSet(viewsets.ModelViewSet):
-    queryset = HeroSlide.objects.all().select_related("category", "subcategory", "subcategory__category").order_by(
-        "sort_order", "-updated_at"
-    )
+    queryset = HeroSlide.objects.all().select_related(
+        "category", "subcategory", "subcategory__category"
+    ).prefetch_related("selected_subcategories").order_by("sort_order", "-updated_at")
     serializer_class = HeroSlideSerializer
     permission_classes = [IsAdminOrReadOnly]
 
@@ -484,6 +484,9 @@ class ProductViewSet(viewsets.ModelViewSet):
         is_list = self.action == "list" and not self.request.query_params.get("slug")
         prefetches = self._list_prefetches if is_list else self._detail_prefetches
         queryset = self._base_queryset().prefetch_related(*prefetches)
+        is_admin_request = bool(self.request.user and self.request.user.is_authenticated and self.request.user.is_staff)
+        if not is_admin_request:
+            queryset = queryset.filter(is_hidden=False)
 
         category = self.request.query_params.get("category")
         subcategory = self.request.query_params.get("subcategory")

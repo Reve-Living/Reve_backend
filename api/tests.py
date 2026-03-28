@@ -151,6 +151,69 @@ class CategorySortOrderSwapTests(TestCase):
 
 
 class ProductSortOrderSwapTests(TestCase):
+    def test_public_product_list_hides_hidden_products(self):
+        client = APIClient()
+        category = Category.objects.create(name="Sofas", slug="sofas", sort_order=1)
+
+        visible = Product.objects.create(
+            name="Visible Sofa",
+            slug="visible-sofa",
+            category=category,
+            price="499.99",
+            short_description="Visible",
+            description="Visible sofa description",
+            is_hidden=False,
+        )
+        Product.objects.create(
+            name="Hidden Sofa",
+            slug="hidden-sofa",
+            category=category,
+            price="599.99",
+            short_description="Hidden",
+            description="Hidden sofa description",
+            is_hidden=True,
+        )
+
+        response = client.get(f"/api/products/?category={category.slug}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["id"] for item in response.data], [visible.id])
+
+    def test_admin_product_list_includes_hidden_products(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin-hidden",
+            password="password123",
+            email="admin-hidden@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Sofas", slug="sofas-admin", sort_order=1)
+        visible = Product.objects.create(
+            name="Visible Admin Sofa",
+            slug="visible-admin-sofa",
+            category=category,
+            price="499.99",
+            short_description="Visible",
+            description="Visible admin sofa description",
+            is_hidden=False,
+        )
+        hidden = Product.objects.create(
+            name="Hidden Admin Sofa",
+            slug="hidden-admin-sofa",
+            category=category,
+            price="599.99",
+            short_description="Hidden",
+            description="Hidden admin sofa description",
+            is_hidden=True,
+        )
+
+        response = client.get(f"/api/products/?category={category.slug}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual({item["id"] for item in response.data}, {visible.id, hidden.id})
+
     def test_product_list_places_zero_sort_order_before_positive(self):
         client = APIClient()
         category = Category.objects.create(name="Beds", slug="beds", sort_order=1)
