@@ -696,6 +696,7 @@ class ProductViewSet(viewsets.ModelViewSet):
     def _validate_related_data(self, images, videos, colors, sizes, styles, fabrics, mattresses):
         image_url_max = ProductImage._meta.get_field("url").max_length
         image_color_max = ProductImage._meta.get_field("color_name").max_length
+        image_alt_max = ProductImage._meta.get_field("alt_text").max_length
         video_url_max = ProductVideo._meta.get_field("url").max_length
         color_name_max = ProductColor._meta.get_field("name").max_length
         size_name_max = ProductSize._meta.get_field("name").max_length
@@ -711,13 +712,16 @@ class ProductViewSet(viewsets.ModelViewSet):
         for img in images:
             url = str((img or {}).get("url", "")).strip()
             color_name = str((img or {}).get("color_name", "")).strip()
+            alt_text = str((img or {}).get("alt_text", "")).strip()
             if not url:
                 continue
             if len(url) > image_url_max:
                 raise ValidationError({"images": [f"Image URL too long (max {image_url_max} chars)."]})
             if color_name and len(color_name) > image_color_max:
                 raise ValidationError({"images": [f"Image color name too long (max {image_color_max} chars)."]})
-            cleaned_images.append({"url": url, "color_name": color_name})
+            if alt_text and len(alt_text) > image_alt_max:
+                raise ValidationError({"images": [f"Image alt text too long (max {image_alt_max} chars)."]})
+            cleaned_images.append({"url": url, "color_name": color_name, "alt_text": alt_text})
 
         cleaned_videos = []
         for vid in videos:
