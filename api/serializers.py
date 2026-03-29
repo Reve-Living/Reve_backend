@@ -352,6 +352,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "assembly_service_enabled",
             "assembly_service_price",
             "dimension_paragraph",
+            "dimension_note",
             "in_stock",
             "is_hidden",
             "is_bestseller",
@@ -372,6 +373,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "filters",
             "computed_dimensions",
             "dimension_paragraph",
+            "dimension_note",
             "dimension_images",
             "show_dimensions_table",
             "dimension_template",
@@ -496,6 +498,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             "images",
             "sizes",
             "dimension_paragraph",
+            "dimension_note",
             "show_dimensions_table",
             "sort_order",
             "assembly_service_enabled",
@@ -557,6 +560,7 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             "features",
             "dimensions",
             "dimension_paragraph",
+            "dimension_note",
             "dimension_images",
             "show_dimensions_table",
             "faqs",
@@ -647,6 +651,9 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         if "dimension_paragraph" in attrs:
             dp = attrs.get("dimension_paragraph") or ""
             attrs["dimension_paragraph"] = str(dp).strip()
+        if "dimension_note" in attrs:
+            dn = attrs.get("dimension_note") or ""
+            attrs["dimension_note"] = str(dn).strip()
         if "dimension_images" in attrs:
             imgs = attrs.get("dimension_images") or []
             cleaned = []

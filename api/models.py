@@ -110,6 +110,8 @@ class Product(models.Model):
     review_count = models.IntegerField(default=0)
     # Optional free-form paragraph shown in place of the dimensions table when provided
     dimension_paragraph = models.TextField(blank=True, default="")
+    # Optional note shown below the dimensions table/modal content
+    dimension_note = models.TextField(blank=True, default="")
     # Optional list of images keyed by size for the dimensions modal: [{size: "5ft King", url: "..."}]
     dimension_images = models.JSONField(default=list, blank=True)
     show_dimensions_table = models.BooleanField(default=True)
