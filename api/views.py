@@ -49,6 +49,8 @@ from .models import (
     DimensionTemplate,
     ProductDimensionTemplate,
     HeroSlide,
+    LifestyleSection,
+    LifestyleArticle,
     Promotion,
 )
 from .serializers import (
@@ -61,6 +63,8 @@ from .serializers import (
     ReviewSerializer,
     CollectionSerializer,
     HeroSlideSerializer,
+    LifestyleSectionSerializer,
+    LifestyleArticleSerializer,
     PromotionSerializer,
     FilterTypeSerializer,
     FilterOptionSerializer,
@@ -435,6 +439,39 @@ class HeroSlideViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         serializer.save()
+
+
+class LifestyleSectionViewSet(viewsets.ModelViewSet):
+    queryset = LifestyleSection.objects.all().prefetch_related("articles").order_by("-updated_at", "-id")
+    serializer_class = LifestyleSectionSerializer
+    permission_classes = [IsAdminOrReadOnly]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        active_only = self.request.query_params.get("active_only")
+        if not getattr(self.request.user, "is_staff", False):
+            queryset = queryset.filter(is_active=True)
+        elif active_only in ("1", "true", "True"):
+            queryset = queryset.filter(is_active=True)
+        return queryset
+
+
+class LifestyleArticleViewSet(viewsets.ModelViewSet):
+    queryset = LifestyleArticle.objects.select_related("section").order_by("sort_order", "-updated_at", "-id")
+    serializer_class = LifestyleArticleSerializer
+    permission_classes = [IsAdminOrReadOnly]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        section_id = self.request.query_params.get("section")
+        active_only = self.request.query_params.get("active_only")
+        if section_id:
+            queryset = queryset.filter(section_id=section_id)
+        if not getattr(self.request.user, "is_staff", False):
+            queryset = queryset.filter(is_active=True, section__is_active=True)
+        elif active_only in ("1", "true", "True"):
+            queryset = queryset.filter(is_active=True, section__is_active=True)
+        return queryset
 
 
 class ProductViewSet(viewsets.ModelViewSet):

@@ -14,6 +14,8 @@ from .models import (
     Review,
     Collection,
     HeroSlide,
+    LifestyleSection,
+    LifestyleArticle,
     Promotion,
     FilterType,
     FilterOption,
@@ -148,6 +150,27 @@ class HeroSlideAdmin(admin.ModelAdmin):
     list_display = ("title", "category", "is_active", "sort_order", "updated_at")
     list_filter = ("is_active", "category")
     search_fields = ("title", "subtitle", "cta_link")
+    ordering = ("sort_order", "-updated_at")
+
+
+class LifestyleArticleInline(admin.TabularInline):
+    model = LifestyleArticle
+    extra = 0
+    fields = ("title", "description", "read_more_type", "read_more_url", "read_more_pdf", "is_active", "sort_order")
+
+
+@admin.register(LifestyleSection)
+class LifestyleSectionAdmin(admin.ModelAdmin):
+    list_display = ("title", "is_active", "updated_at")
+    search_fields = ("title", "subtitle")
+    inlines = [LifestyleArticleInline]
+
+
+@admin.register(LifestyleArticle)
+class LifestyleArticleAdmin(admin.ModelAdmin):
+    list_display = ("title", "section", "read_more_type", "is_active", "sort_order", "updated_at")
+    list_filter = ("read_more_type", "is_active", "section")
+    search_fields = ("title", "description")
     ordering = ("sort_order", "-updated_at")
 
 

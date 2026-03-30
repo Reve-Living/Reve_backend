@@ -9,6 +9,8 @@ from .views import (
     SubCategoryViewSet,
     CollectionViewSet,
     HeroSlideViewSet,
+    LifestyleSectionViewSet,
+    LifestyleArticleViewSet,
     ProductViewSet,
     OrderViewSet,
     ReviewViewSet,
@@ -30,6 +32,8 @@ router.register(r"categories", CategoryViewSet)
 router.register(r"subcategories", SubCategoryViewSet)
 router.register(r"collections", CollectionViewSet)
 router.register(r"hero-slides", HeroSlideViewSet)
+router.register(r"lifestyle-sections", LifestyleSectionViewSet)
+router.register(r"lifestyle-articles", LifestyleArticleViewSet)
 router.register(r"products", ProductViewSet)
 router.register(r"orders", OrderViewSet)
 router.register(r"reviews", ReviewViewSet)

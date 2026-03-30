@@ -20,6 +20,8 @@ from .models import (
     Review,
     Collection,
     HeroSlide,
+    LifestyleSection,
+    LifestyleArticle,
     Promotion,
     FilterType,
     FilterOption,
@@ -872,6 +874,79 @@ class HeroSlideSerializer(serializers.ModelSerializer):
             else:
                 attrs["cta_link"] = existing_cta
         return attrs
+
+
+class LifestyleArticleSerializer(serializers.ModelSerializer):
+    read_more_target = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LifestyleArticle
+        fields = (
+            "id",
+            "section",
+            "title",
+            "description",
+            "image",
+            "read_more_type",
+            "read_more_url",
+            "read_more_pdf",
+            "read_more_target",
+            "is_active",
+            "sort_order",
+            "created_at",
+            "updated_at",
+        )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        instance = getattr(self, "instance", None)
+        read_more_type = attrs.get("read_more_type", getattr(instance, "read_more_type", LifestyleArticle.READ_MORE_NONE))
+        read_more_url = str(attrs.get("read_more_url", getattr(instance, "read_more_url", "")) or "").strip()
+        read_more_pdf = str(attrs.get("read_more_pdf", getattr(instance, "read_more_pdf", "")) or "").strip()
+
+        if read_more_type == LifestyleArticle.READ_MORE_URL and not read_more_url:
+            raise serializers.ValidationError({"read_more_url": "Add a URL for the Read More button"})
+        if read_more_type == LifestyleArticle.READ_MORE_PDF and not read_more_pdf:
+            raise serializers.ValidationError({"read_more_pdf": "Add a PDF link for the Read More button"})
+
+        attrs["read_more_url"] = read_more_url
+        attrs["read_more_pdf"] = read_more_pdf
+        attrs["title"] = str(attrs.get("title", getattr(instance, "title", "")) or "").strip()
+        attrs["description"] = str(attrs.get("description", getattr(instance, "description", "")) or "").strip()
+        attrs["image"] = str(attrs.get("image", getattr(instance, "image", "")) or "").strip()
+        return attrs
+
+    def get_read_more_target(self, obj):
+        if obj.read_more_type == LifestyleArticle.READ_MORE_PDF:
+            return obj.read_more_pdf
+        if obj.read_more_type == LifestyleArticle.READ_MORE_URL:
+            return obj.read_more_url
+        return ""
+
+
+class LifestyleSectionSerializer(serializers.ModelSerializer):
+    articles = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LifestyleSection
+        fields = (
+            "id",
+            "title",
+            "subtitle",
+            "is_active",
+            "created_at",
+            "updated_at",
+            "articles",
+        )
+
+    def get_articles(self, obj):
+        request = self.context.get("request")
+        queryset = obj.articles.all()
+        if request and not getattr(request.user, "is_staff", False):
+            queryset = queryset.filter(is_active=True)
+        elif request and request.query_params.get("active_only") in ("1", "true", "True"):
+            queryset = queryset.filter(is_active=True)
+        return LifestyleArticleSerializer(queryset, many=True, context=self.context).data
 
 
 class PromotionSerializer(serializers.ModelSerializer):

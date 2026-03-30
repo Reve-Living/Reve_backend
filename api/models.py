@@ -8,6 +8,7 @@ class Category(models.Model):
     description = models.TextField(blank=True)
     image = models.URLField(max_length=1000, blank=True)
     show_in_collections = models.BooleanField(default=False)
+    show_in_all_collections = models.BooleanField(default=False)
     image_alt_text = models.CharField(max_length=255, blank=True, default="")
     meta_title = models.CharField(max_length=255, blank=True, default="")
     meta_description = models.TextField(blank=True, default="")
@@ -24,6 +25,7 @@ class SubCategory(models.Model):
     description = models.TextField(blank=True)
     image = models.URLField(max_length=1000, blank=True)
     show_in_collections = models.BooleanField(default=False)
+    show_in_all_collections = models.BooleanField(default=False)
     image_alt_text = models.CharField(max_length=255, blank=True, default="")
     meta_title = models.CharField(max_length=255, blank=True, default="")
     meta_description = models.TextField(blank=True, default="")
@@ -70,6 +72,49 @@ class HeroSlide(models.Model):
 
     class Meta:
         ordering = ["sort_order", "-updated_at"]
+
+    def __str__(self) -> str:
+        return self.title
+
+
+class LifestyleSection(models.Model):
+    title = models.CharField(max_length=255, default="Transform Your Home")
+    subtitle = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+
+    def __str__(self) -> str:
+        return self.title
+
+
+class LifestyleArticle(models.Model):
+    READ_MORE_NONE = "none"
+    READ_MORE_URL = "url"
+    READ_MORE_PDF = "pdf"
+    READ_MORE_TYPE_CHOICES = [
+        (READ_MORE_NONE, "No read more link"),
+        (READ_MORE_URL, "External/Internal URL"),
+        (READ_MORE_PDF, "PDF"),
+    ]
+
+    section = models.ForeignKey(LifestyleSection, related_name="articles", on_delete=models.CASCADE)
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default="")
+    image = models.URLField(max_length=1000, blank=True)
+    read_more_type = models.CharField(max_length=10, choices=READ_MORE_TYPE_CHOICES, default=READ_MORE_NONE)
+    read_more_url = models.CharField(max_length=1000, blank=True, default="")
+    read_more_pdf = models.CharField(max_length=1000, blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    sort_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "-updated_at", "-id"]
 
     def __str__(self) -> str:
         return self.title
