@@ -844,6 +844,20 @@ class ProductViewSet(viewsets.ModelViewSet):
                                 sizes.append(sval)
                     if size_val and size_val not in sizes:
                         sizes.append(size_val)
+                    use_size_pricing = bool(option.get("use_size_pricing", False))
+                    raw_overrides = option.get("size_price_overrides", {})
+                    size_price_overrides = {}
+                    if isinstance(raw_overrides, dict):
+                        for size_key, override_value in raw_overrides.items():
+                            normalized_size = str(size_key or "").strip()
+                            if not normalized_size:
+                                continue
+                            try:
+                                size_price_overrides[normalized_size] = float(override_value)
+                            except Exception:
+                                raise ValidationError(
+                                    {"styles": [f"Invalid size-specific price for option '{label}' and size '{normalized_size}'."]}
+                                )
                     price_delta = option.get("price_delta", option.get("delta", 0))
                     try:
                         price_delta = float(price_delta or 0)
@@ -851,7 +865,17 @@ class ProductViewSet(viewsets.ModelViewSet):
                         price_delta = 0
                     if len(icon_url) > max_style_option_icon_length:
                         raise ValidationError({"styles": [f"Style option icon is too large (max {max_style_option_icon_length} chars)."]})
-                    normalized_options.append({"label": label, "description": description, "icon_url": icon_url, "price_delta": price_delta, "sizes": sizes})
+                    normalized_options.append(
+                        {
+                            "label": label,
+                            "description": description,
+                            "icon_url": icon_url,
+                            "price_delta": price_delta,
+                            "sizes": sizes,
+                            "use_size_pricing": use_size_pricing or bool(size_price_overrides),
+                            "size_price_overrides": size_price_overrides,
+                        }
+                    )
 
             cleaned_styles.append({
                 "name": name,
