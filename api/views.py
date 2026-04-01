@@ -464,9 +464,12 @@ class LifestyleArticleViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         section_id = self.request.query_params.get("section")
+        slug = self.request.query_params.get("slug")
         active_only = self.request.query_params.get("active_only")
         if section_id:
             queryset = queryset.filter(section_id=section_id)
+        if slug:
+            queryset = queryset.filter(slug=slug)
         if not getattr(self.request.user, "is_staff", False):
             queryset = queryset.filter(is_active=True, section__is_active=True)
         elif active_only in ("1", "true", "True"):

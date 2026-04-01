@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.utils.text import slugify
 
 
 class Category(models.Model):
@@ -95,16 +96,23 @@ class LifestyleArticle(models.Model):
     READ_MORE_NONE = "none"
     READ_MORE_URL = "url"
     READ_MORE_PDF = "pdf"
+    READ_MORE_ARTICLE = "article"
     READ_MORE_TYPE_CHOICES = [
         (READ_MORE_NONE, "No read more link"),
         (READ_MORE_URL, "External/Internal URL"),
         (READ_MORE_PDF, "PDF"),
+        (READ_MORE_ARTICLE, "Article page"),
     ]
 
     section = models.ForeignKey(LifestyleSection, related_name="articles", on_delete=models.CASCADE)
     title = models.CharField(max_length=255)
+    slug = models.SlugField(max_length=255, unique=True, blank=True, default="")
     description = models.TextField(blank=True, default="")
     image = models.URLField(max_length=1000, blank=True)
+    article_title = models.CharField(max_length=255, blank=True, default="")
+    article_intro = models.TextField(blank=True, default="")
+    article_body = models.TextField(blank=True, default="")
+    article_content = models.JSONField(default=list, blank=True)
     read_more_type = models.CharField(max_length=10, choices=READ_MORE_TYPE_CHOICES, default=READ_MORE_NONE)
     read_more_url = models.CharField(max_length=1000, blank=True, default="")
     read_more_pdf = models.CharField(max_length=1000, blank=True, default="")
@@ -118,6 +126,17 @@ class LifestyleArticle(models.Model):
 
     def __str__(self) -> str:
         return self.title
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.title) or "article"
+            slug = base_slug
+            counter = 1
+            while LifestyleArticle.objects.exclude(pk=self.pk).filter(slug=slug).exists():
+                slug = f"{base_slug}-{counter}"
+                counter += 1
+            self.slug = slug
+        super().save(*args, **kwargs)
 
 
 class Product(models.Model):

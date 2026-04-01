@@ -878,6 +878,7 @@ class HeroSlideSerializer(serializers.ModelSerializer):
 
 class LifestyleArticleSerializer(serializers.ModelSerializer):
     read_more_target = serializers.SerializerMethodField()
+    related_articles = serializers.SerializerMethodField()
 
     class Meta:
         model = LifestyleArticle
@@ -885,12 +886,18 @@ class LifestyleArticleSerializer(serializers.ModelSerializer):
             "id",
             "section",
             "title",
+            "slug",
             "description",
             "image",
+            "article_title",
+            "article_intro",
+            "article_body",
+            "article_content",
             "read_more_type",
             "read_more_url",
             "read_more_pdf",
             "read_more_target",
+            "related_articles",
             "is_active",
             "sort_order",
             "created_at",
@@ -900,18 +907,34 @@ class LifestyleArticleSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         attrs = super().validate(attrs)
         instance = getattr(self, "instance", None)
+        title = str(attrs.get("title", getattr(instance, "title", "")) or "").strip()
         read_more_type = attrs.get("read_more_type", getattr(instance, "read_more_type", LifestyleArticle.READ_MORE_NONE))
         read_more_url = str(attrs.get("read_more_url", getattr(instance, "read_more_url", "")) or "").strip()
         read_more_pdf = str(attrs.get("read_more_pdf", getattr(instance, "read_more_pdf", "")) or "").strip()
+        article_title = str(attrs.get("article_title", getattr(instance, "article_title", "")) or "").strip()
+        article_intro = str(attrs.get("article_intro", getattr(instance, "article_intro", "")) or "").strip()
+        article_body = str(attrs.get("article_body", getattr(instance, "article_body", "")) or "").strip()
+        article_content = attrs.get("article_content", getattr(instance, "article_content", []))
+
+        if not title:
+            raise serializers.ValidationError({"title": "Article title is required"})
 
         if read_more_type == LifestyleArticle.READ_MORE_URL and not read_more_url:
             raise serializers.ValidationError({"read_more_url": "Add a URL for the Read More button"})
         if read_more_type == LifestyleArticle.READ_MORE_PDF and not read_more_pdf:
             raise serializers.ValidationError({"read_more_pdf": "Add a PDF link for the Read More button"})
+        if read_more_type == LifestyleArticle.READ_MORE_ARTICLE and not article_body:
+            has_blocks = isinstance(article_content, list) and len(article_content) > 0
+            if not has_blocks:
+                raise serializers.ValidationError({"article_body": "Add article content for the article page"})
 
         attrs["read_more_url"] = read_more_url
         attrs["read_more_pdf"] = read_more_pdf
-        attrs["title"] = str(attrs.get("title", getattr(instance, "title", "")) or "").strip()
+        attrs["title"] = title
+        attrs["article_title"] = article_title
+        attrs["article_intro"] = article_intro
+        attrs["article_body"] = article_body
+        attrs["article_content"] = article_content if isinstance(article_content, list) else []
         attrs["description"] = str(attrs.get("description", getattr(instance, "description", "")) or "").strip()
         attrs["image"] = str(attrs.get("image", getattr(instance, "image", "")) or "").strip()
         return attrs
@@ -921,7 +944,27 @@ class LifestyleArticleSerializer(serializers.ModelSerializer):
             return obj.read_more_pdf
         if obj.read_more_type == LifestyleArticle.READ_MORE_URL:
             return obj.read_more_url
+        if obj.read_more_type == LifestyleArticle.READ_MORE_ARTICLE:
+            return f"/transform-your-home/{obj.slug}"
         return ""
+
+    def get_related_articles(self, obj):
+        queryset = (
+            LifestyleArticle.objects.filter(section=obj.section, is_active=True, section__is_active=True)
+            .exclude(pk=obj.pk)
+            .order_by("sort_order", "-updated_at", "-id")[:3]
+        )
+        return [
+            {
+                "id": article.id,
+                "title": article.title,
+                "slug": article.slug,
+                "description": article.description,
+                "image": article.image,
+                "read_more_target": f"/transform-your-home/{article.slug}",
+            }
+            for article in queryset
+        ]
 
 
 class LifestyleSectionSerializer(serializers.ModelSerializer):

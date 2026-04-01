@@ -64,7 +64,7 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'api.middleware.EnsureCORSHeadersMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'django.middleware.gzip.GZipMiddleware',  # compress large JSON/image responses
+    'django.middleware.gzip.GZipMiddleware',  
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
