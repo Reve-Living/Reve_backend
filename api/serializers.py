@@ -888,11 +888,13 @@ class LifestyleArticleSerializer(serializers.ModelSerializer):
             "title",
             "slug",
             "description",
+            "card_image",
             "image",
             "article_title",
             "article_intro",
             "article_body",
             "article_content",
+            "article_sections",
             "read_more_type",
             "read_more_url",
             "read_more_pdf",
@@ -915,6 +917,7 @@ class LifestyleArticleSerializer(serializers.ModelSerializer):
         article_intro = str(attrs.get("article_intro", getattr(instance, "article_intro", "")) or "").strip()
         article_body = str(attrs.get("article_body", getattr(instance, "article_body", "")) or "").strip()
         article_content = attrs.get("article_content", getattr(instance, "article_content", []))
+        article_sections = attrs.get("article_sections", getattr(instance, "article_sections", []))
 
         if not title:
             raise serializers.ValidationError({"title": "Article title is required"})
@@ -925,7 +928,8 @@ class LifestyleArticleSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"read_more_pdf": "Add a PDF link for the Read More button"})
         if read_more_type == LifestyleArticle.READ_MORE_ARTICLE and not article_body:
             has_blocks = isinstance(article_content, list) and len(article_content) > 0
-            if not has_blocks:
+            has_sections = isinstance(article_sections, list) and len(article_sections) > 0
+            if not has_blocks and not has_sections:
                 raise serializers.ValidationError({"article_body": "Add article content for the article page"})
 
         attrs["read_more_url"] = read_more_url
@@ -935,7 +939,9 @@ class LifestyleArticleSerializer(serializers.ModelSerializer):
         attrs["article_intro"] = article_intro
         attrs["article_body"] = article_body
         attrs["article_content"] = article_content if isinstance(article_content, list) else []
+        attrs["article_sections"] = article_sections if isinstance(article_sections, list) else []
         attrs["description"] = str(attrs.get("description", getattr(instance, "description", "")) or "").strip()
+        attrs["card_image"] = str(attrs.get("card_image", getattr(instance, "card_image", "")) or "").strip()
         attrs["image"] = str(attrs.get("image", getattr(instance, "image", "")) or "").strip()
         return attrs
 
