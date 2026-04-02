@@ -1,5 +1,6 @@
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.db.models import Q
 from django.utils.text import slugify
 from rest_framework import serializers
 from .models import (
@@ -396,17 +397,59 @@ class ProductSerializer(serializers.ModelSerializer):
 
     def get_mattresses(self, obj):
         """
-        Use product-specific mattresses when they exist on the product;
-        otherwise fall back to the shared global mattress catalogue.
+        Return mattresses assigned via the mattress manager for the product's
+        category/subcategory, then apply any product-specific overrides by name.
         """
-        product_mattresses = getattr(obj, "mattresses", None)
-        if product_mattresses is not None:
-            product_mattress_list = list(product_mattresses.all())
-            if product_mattress_list:
-                return ProductMattressSerializer(product_mattress_list, many=True).data
+        options = (
+            MattressOption.objects.filter(is_active=True)
+            .prefetch_related("prices", "categories", "subcategories")
+            .order_by("sort_order", "name")
+        )
 
-        options = MattressOption.objects.filter(is_active=True).prefetch_related("prices")
-        return MattressOptionSerializer(options, many=True).data
+        if obj.subcategory_id:
+            options = options.filter(
+                Q(subcategories__id=obj.subcategory_id)
+                | Q(subcategories__isnull=True, categories__id=obj.category_id)
+                | Q(subcategories__isnull=True, categories__isnull=True)
+            ).distinct()
+        elif obj.category_id:
+            options = options.filter(
+                Q(categories__id=obj.category_id, subcategories__isnull=True)
+                | Q(categories__isnull=True, subcategories__isnull=True)
+            ).distinct()
+
+        base_items = MattressOptionSerializer(options, many=True).data
+        overrides = getattr(obj, "mattresses", None)
+        override_items = list(overrides.all()) if overrides is not None else []
+        override_lookup = {
+            str(item.name or "").strip().lower(): item
+            for item in override_items
+            if str(item.name or "").strip()
+        }
+
+        merged = []
+        for item in base_items:
+            key = str(item.get("name", "")).strip().lower()
+            override = override_lookup.get(key)
+            if not override:
+                merged.append(item)
+                continue
+
+            merged.append(
+                {
+                    **item,
+                    "name": override.name or item.get("name"),
+                    "description": override.description or item.get("description"),
+                    "image_url": override.image_url or item.get("image_url"),
+                    "price": override.price if override.price is not None else item.get("price"),
+                    "enable_bunk_positions": override.enable_bunk_positions,
+                    "price_top": override.price_top if override.price_top is not None else item.get("price_top"),
+                    "price_bottom": override.price_bottom if override.price_bottom is not None else item.get("price_bottom"),
+                    "price_both": override.price_both if override.price_both is not None else item.get("price_both"),
+                }
+            )
+
+        return merged
 
     def get_filters(self, obj):
         # use prefetched data when available to avoid N+1
