@@ -252,6 +252,10 @@ class MattressOptionSerializer(serializers.ModelSerializer):
 
 
 class ProductMattressSerializer(serializers.ModelSerializer):
+    product_id = serializers.IntegerField(source="product.id", read_only=True)
+    product_name = serializers.CharField(source="product.name", read_only=True)
+    product_category_id = serializers.IntegerField(source="product.category.id", read_only=True)
+    product_subcategory_id = serializers.IntegerField(source="product.subcategory.id", read_only=True, allow_null=True)
     source_product_name = serializers.CharField(source="source_product.name", read_only=True)
     source_product_slug = serializers.CharField(source="source_product.slug", read_only=True)
 
@@ -259,6 +263,10 @@ class ProductMattressSerializer(serializers.ModelSerializer):
         model = ProductMattress
         fields = (
             "id",
+            "product_id",
+            "product_name",
+            "product_category_id",
+            "product_subcategory_id",
             "name",
             "description",
             "image_url",

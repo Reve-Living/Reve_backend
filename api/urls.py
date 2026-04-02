@@ -24,6 +24,7 @@ from .views import (
     CategoryFiltersView,
     AdminSummaryView,
     MattressOptionViewSet,
+    ProductMattressAdminViewSet,
     PromotionViewSet,
 )
 
@@ -45,6 +46,7 @@ router.register(r"dimension-templates", DimensionTemplateViewSet)
 router.register(r"style-groups", ProductStyleLibraryViewSet, basename="style-groups")
 router.register(r"category-filters", CategoryFilterViewSet)
 router.register(r"mattress-options", MattressOptionViewSet)
+router.register(r"product-mattresses", ProductMattressAdminViewSet)
 router.register(r"promotions", PromotionViewSet)
 
 urlpatterns = [

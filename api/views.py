@@ -72,6 +72,7 @@ from .serializers import (
     ProductFilterValueSerializer,
     ProductStyleLibrarySerializer,
     MattressOptionSerializer,
+    ProductMattressSerializer,
 )
 from .emails import send_order_confirmation_emails
 from .delivery_note_pdf import build_delivery_note_pdf
@@ -991,6 +992,15 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminOrReadOnly]
     http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
 
+    @action(detail=False, methods=["get"], permission_classes=[IsAdminUser], url_path="product-mattresses")
+    def product_mattresses(self, request):
+        queryset = (
+            ProductMattress.objects.select_related("product", "product__category", "product__subcategory", "source_product")
+            .order_by("product__name", "id")
+        )
+        serializer = ProductMattressSerializer(queryset, many=True)
+        return Response(serializer.data)
+
     def _clean_prices(self, prices_raw):
         cleaned = []
         for p in prices_raw or []:
@@ -1083,6 +1093,15 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
         if subcategories is not None:
             option.subcategories.set(subcategories)
         return Response(self.get_serializer(option).data)
+
+
+class ProductMattressAdminViewSet(viewsets.ModelViewSet):
+    queryset = ProductMattress.objects.select_related(
+        "product", "product__category", "product__subcategory", "source_product"
+    ).order_by("product__name", "id")
+    serializer_class = ProductMattressSerializer
+    permission_classes = [IsAdminUser]
+    http_method_names = ["get", "patch", "delete", "head", "options"]
 
 
 class PromotionViewSet(viewsets.ModelViewSet):
