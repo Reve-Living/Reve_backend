@@ -264,6 +264,7 @@ class ProductMattressSerializer(serializers.ModelSerializer):
             "description",
             "image_url",
             "price",
+            "original_price",
             "enable_bunk_positions",
             "price_top",
             "price_bottom",
@@ -389,8 +390,15 @@ class ProductSerializer(serializers.ModelSerializer):
 
     def get_mattresses(self, obj):
         """
-        Return global mattress options so every bed shows the same admin-defined set.
+        Use product-specific mattress overrides when present; otherwise fall back
+        to the shared global mattress catalogue.
         """
+        product_mattresses = getattr(obj, "mattresses", None)
+        if product_mattresses is not None:
+            product_mattress_list = list(product_mattresses.all())
+            if product_mattress_list:
+                return ProductMattressSerializer(product_mattress_list, many=True).data
+
         options = MattressOption.objects.filter(is_active=True).prefetch_related("prices")
         return MattressOptionSerializer(options, many=True).data
 
