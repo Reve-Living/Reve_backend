@@ -388,17 +388,29 @@ class ProductSerializer(serializers.ModelSerializer):
 
     def get_mattresses(self, obj):
         """
-        Use product-specific mattress overrides when present; otherwise fall back
-        to the shared global mattress catalogue.
+        Return product-specific mattresses first, then append shared global
+        mattress options that are not already represented by name.
         """
+        merged = []
+        seen_names = set()
+
         product_mattresses = getattr(obj, "mattresses", None)
         if product_mattresses is not None:
             product_mattress_list = list(product_mattresses.all())
-            if product_mattress_list:
-                return ProductMattressSerializer(product_mattress_list, many=True).data
+            for item in ProductMattressSerializer(product_mattress_list, many=True).data:
+                key = str(item.get("name", "")).strip().lower()
+                if key:
+                    seen_names.add(key)
+                merged.append(item)
 
         options = MattressOption.objects.filter(is_active=True).prefetch_related("prices")
-        return MattressOptionSerializer(options, many=True).data
+        for item in MattressOptionSerializer(options, many=True).data:
+            key = str(item.get("name", "")).strip().lower()
+            if key and key in seen_names:
+                continue
+            merged.append(item)
+
+        return merged
 
     def get_filters(self, obj):
         # use prefetched data when available to avoid N+1
