@@ -251,6 +251,7 @@ class MattressOption(models.Model):
 
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
+    features = models.TextField(blank=True, default="")
     image_url = models.URLField(max_length=1000, blank=True)
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     original_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
