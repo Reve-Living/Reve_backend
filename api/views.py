@@ -13,7 +13,7 @@ from django.core.files.base import ContentFile
 from django.contrib.auth.models import User
 from django.utils.text import slugify
 from django.db import transaction
-from django.db.models import Prefetch, Q
+from django.db.models import Prefetch, Q, Case, When, Value, IntegerField
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 from django.http import HttpResponse
@@ -987,10 +987,24 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
     Public GET is allowed; write requires admin.
     """
 
-    queryset = MattressOption.objects.all().prefetch_related("prices").order_by("sort_order", "name")
+    queryset = MattressOption.objects.all().prefetch_related("prices")
     serializer_class = MattressOptionSerializer
     permission_classes = [IsAdminOrReadOnly]
     http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return (
+            super()
+            .get_queryset()
+            .annotate(
+                sort_priority=Case(
+                    When(sort_order__gt=0, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
+            )
+            .order_by("sort_priority", "sort_order", "name")
+        )
 
     @action(detail=False, methods=["get"], permission_classes=[IsAdminUser], url_path="product-mattresses")
     def product_mattresses(self, request):

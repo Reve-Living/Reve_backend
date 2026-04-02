@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Case, When, Value, IntegerField
 from django.utils.text import slugify
 from rest_framework import serializers
 from .models import (
@@ -404,7 +404,14 @@ class ProductSerializer(serializers.ModelSerializer):
         options = (
             MattressOption.objects.filter(is_active=True)
             .prefetch_related("prices", "categories", "subcategories")
-            .order_by("sort_order", "name")
+            .annotate(
+                sort_priority=Case(
+                    When(sort_order__gt=0, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
+            )
+            .order_by("sort_priority", "sort_order", "name")
         )
 
         if obj.subcategory_id:
