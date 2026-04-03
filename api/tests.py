@@ -581,6 +581,50 @@ class ProductSortOrderSwapTests(TestCase):
         self.assertEqual(first_product.sort_order, 5)
         self.assertEqual(second_product.sort_order, 0)
 
+    def test_editing_product_without_sort_change_preserves_existing_positions(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin6b",
+            password="password123",
+            email="admin6b@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Beds", slug="beds-stable-edit-order", sort_order=1)
+        first_product = Product.objects.create(
+            name="Stable Bed One",
+            slug="stable-bed-one",
+            category=category,
+            price="499.99",
+            short_description="One",
+            description="Stable one description",
+            sort_order=1,
+        )
+        second_product = Product.objects.create(
+            name="Stable Bed Two",
+            slug="stable-bed-two",
+            category=category,
+            price="599.99",
+            short_description="Two",
+            description="Stable two description",
+            sort_order=5,
+        )
+
+        response = client.patch(
+            f"/api/products/{second_product.id}/",
+            {"name": "Stable Bed Two Updated"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        first_product.refresh_from_db()
+        second_product.refresh_from_db()
+
+        self.assertEqual(first_product.sort_order, 1)
+        self.assertEqual(second_product.sort_order, 5)
+        self.assertEqual(second_product.name, "Stable Bed Two Updated")
+
     def test_creating_product_allows_direct_gap_position(self):
         client = APIClient()
         admin_user = User.objects.create_user(

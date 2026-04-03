@@ -769,10 +769,17 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         validated_data.pop("_dimension_template_obj", None)
         filter_values = validated_data.pop("filter_values", None)
         previous_sort_order = instance.sort_order
+        previous_category_id = instance.category_id
+        previous_subcategory_id = instance.subcategory_id
         new_sort_order = validated_data.get("sort_order", instance.sort_order)
         with transaction.atomic():
             product = super().update(instance, validated_data)
-            self._reorder_products(product, new_sort_order, previous_sort_order=previous_sort_order)
+            scope_changed = (
+                product.category_id != previous_category_id
+                or product.subcategory_id != previous_subcategory_id
+            )
+            if scope_changed or new_sort_order != previous_sort_order:
+                self._reorder_products(product, new_sort_order, previous_sort_order=previous_sort_order)
             if filter_values is not None:
                 self._sync_filter_values(product, filter_values)
             return product
