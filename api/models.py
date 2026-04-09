@@ -197,6 +197,7 @@ class ProductImage(models.Model):
     product = models.ForeignKey(Product, related_name="images", on_delete=models.CASCADE)
     url = models.URLField(max_length=1000)
     color_name = models.CharField(max_length=120, blank=True, default="")
+    style_name = models.CharField(max_length=120, blank=True, default="")
     alt_text = models.CharField(max_length=255, blank=True, default="")
 
 

@@ -155,7 +155,7 @@ class CategorySerializer(serializers.ModelSerializer):
 class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductImage
-        fields = ("id", "url", "color_name", "alt_text")
+        fields = ("id", "url", "color_name", "style_name", "alt_text")
 
 
 class ProductVideoSerializer(serializers.ModelSerializer):
