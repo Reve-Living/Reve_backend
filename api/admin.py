@@ -17,6 +17,7 @@ from .models import (
     LifestyleSection,
     LifestyleArticle,
     Promotion,
+    AnnouncementSettings,
     FilterType,
     FilterOption,
     CategoryFilter,
@@ -181,6 +182,19 @@ class PromotionAdmin(admin.ModelAdmin):
     search_fields = ("name", "code", "announcement_text")
     filter_horizontal = ("categories", "subcategories")
     ordering = ("sort_order", "start_date", "name")
+
+
+@admin.register(AnnouncementSettings)
+class AnnouncementSettingsAdmin(admin.ModelAdmin):
+    list_display = ("default_text", "updated_at")
+
+    def has_add_permission(self, request):
+        if AnnouncementSettings.objects.exists():
+            return False
+        return super().has_add_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 # Filter System Admin

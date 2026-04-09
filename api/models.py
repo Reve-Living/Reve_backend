@@ -338,6 +338,25 @@ class Promotion(models.Model):
         return f"{self.name} ({self.code})"
 
 
+class AnnouncementSettings(models.Model):
+    default_text = models.CharField(max_length=255, blank=True, default="Coming Soon")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Announcement settings"
+        verbose_name_plural = "Announcement settings"
+
+    def __str__(self):
+        return "Announcement settings"
+
+    @classmethod
+    def get_solo(cls):
+        obj = cls.objects.order_by("id").first()
+        if obj:
+            return obj
+        return cls.objects.create()
+
+
 class Order(models.Model):
     STATUS_CHOICES = [
         ("pending", "Pending"),

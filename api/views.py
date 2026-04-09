@@ -52,6 +52,7 @@ from .models import (
     LifestyleSection,
     LifestyleArticle,
     Promotion,
+    AnnouncementSettings,
 )
 from .serializers import (
     RegisterSerializer,
@@ -66,6 +67,7 @@ from .serializers import (
     LifestyleSectionSerializer,
     LifestyleArticleSerializer,
     PromotionSerializer,
+    AnnouncementSettingsSerializer,
     FilterTypeSerializer,
     FilterOptionSerializer,
     CategoryFilterSerializer,
@@ -183,6 +185,10 @@ def _build_promotion_result(*, code: str, items_payload: list[dict]):
         "applicable_product_ids": applicable_product_ids,
         "line_results": line_results,
     }
+
+
+def _get_announcement_settings():
+    return AnnouncementSettings.get_solo()
 
 
 class HealthCheckView(APIView):
@@ -1140,14 +1146,37 @@ class PromotionViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], permission_classes=[AllowAny])
     def announcement(self, request):
         promotion = _get_live_promotions().exclude(announcement_text="").first()
-        if not promotion:
-            return Response({"text": "", "promotion": None})
+        if promotion:
+            return Response(
+                {
+                    "text": promotion.announcement_text,
+                    "promotion": _serialize_public_promotion(promotion),
+                    "is_default": False,
+                }
+            )
+
         return Response(
             {
-                "text": promotion.announcement_text,
-                "promotion": _serialize_public_promotion(promotion),
+                "text": (_get_announcement_settings().default_text or "").strip(),
+                "promotion": None,
+                "is_default": True,
             }
         )
+
+    @action(detail=False, methods=["get", "put", "patch"], permission_classes=[IsAdminUser], url_path="default-announcement")
+    def default_announcement(self, request):
+        settings_obj = _get_announcement_settings()
+        if request.method == "GET":
+            return Response(AnnouncementSettingsSerializer(settings_obj).data)
+
+        serializer = AnnouncementSettingsSerializer(
+            settings_obj,
+            data=request.data,
+            partial=request.method == "PATCH",
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
     @action(detail=False, methods=["post"], permission_classes=[AllowAny])
     def availability(self, request):

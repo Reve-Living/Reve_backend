@@ -24,6 +24,7 @@ from .models import (
     LifestyleSection,
     LifestyleArticle,
     Promotion,
+    AnnouncementSettings,
     FilterType,
     FilterOption,
     CategoryFilter,
@@ -1135,6 +1136,15 @@ class PromotionSerializer(serializers.ModelSerializer):
 
         today = timezone.localdate()
         return bool(obj.is_active and obj.start_date <= today <= obj.end_date)
+
+
+class AnnouncementSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AnnouncementSettings
+        fields = ("id", "default_text", "updated_at")
+
+    def validate_default_text(self, value):
+        return str(value or "").strip()
 
 
 class OrderItemSerializer(serializers.ModelSerializer):
