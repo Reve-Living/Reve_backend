@@ -120,7 +120,10 @@ DATABASES = {
         "HOST": parsed.hostname,
         "PORT": parsed.port or "5432",
         "OPTIONS": db_options,
-        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
+        # Keep pooled Neon connections alive longer so storefront traffic avoids
+        # paying the first-query connection penalty over and over.
+        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "600")),
+        "CONN_HEALTH_CHECKS": os.getenv("DB_CONN_HEALTH_CHECKS", "True") == "True",
     }
 }
 
