@@ -345,6 +345,21 @@ class SubCategoryViewSet(viewsets.ModelViewSet):
 
         cache.clear()
 
+    @method_decorator(cache_page(60 * 5))
+    def _cached_list(self, request, *args, **kwargs):
+        """Cache public storefront subcategory lists briefly."""
+        return super().list(request, *args, **kwargs)
+
+    def list(self, request, *args, **kwargs):
+        """
+        Keep admin subcategory management fresh while allowing public navigation
+        requests to benefit from a short cache window.
+        """
+        has_auth_header = bool(request.headers.get("Authorization"))
+        if getattr(request.user, "is_staff", False) or has_auth_header:
+            return super().list(request, *args, **kwargs)
+        return self._cached_list(request, *args, **kwargs)
+
     def get_queryset(self):
         queryset = super().get_queryset()
         category_id = self.request.query_params.get("category")
