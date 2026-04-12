@@ -287,9 +287,8 @@ class CategoryViewSet(viewsets.ModelViewSet):
 
         cache.clear()
 
-    @method_decorator(cache_page(60 * 5))
     def _cached_list(self, request, *args, **kwargs):
-        """Public storefront reads can be cached briefly to reduce repeated load."""
+        """Serve category lists without cross-worker cache staleness."""
         return super().list(request, *args, **kwargs)
 
     def list(self, request, *args, **kwargs):
@@ -345,9 +344,8 @@ class SubCategoryViewSet(viewsets.ModelViewSet):
 
         cache.clear()
 
-    @method_decorator(cache_page(60 * 5))
     def _cached_list(self, request, *args, **kwargs):
-        """Cache public storefront subcategory lists briefly."""
+        """Serve subcategory lists without cross-worker cache staleness."""
         return super().list(request, *args, **kwargs)
 
     def list(self, request, *args, **kwargs):
@@ -623,11 +621,9 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         cache.clear()
 
-    @method_decorator(cache_page(60 * 5))
     def _cached_list(self, request, *args, **kwargs):
         """
-        Cache public storefront product lists briefly so the first homepage/category
-        visit does not have to rebuild the same payload every time.
+        Serve product lists without cross-worker cache staleness.
         """
         return super().list(request, *args, **kwargs)
 
