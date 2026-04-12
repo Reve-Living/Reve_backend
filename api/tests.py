@@ -3,7 +3,7 @@ from django.test import TestCase, override_settings
 from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 
-from .models import Category, Product
+from .models import Category, Product, SubCategory
 
 
 @override_settings(
@@ -155,6 +155,58 @@ class CategorySortOrderSwapTests(TestCase):
 
         self.assertEqual(tables.sort_order, 3)
         self.assertEqual(sofas.sort_order, 5)
+
+
+class SharedSubcategoryTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin_user = User.objects.create_user(
+            username="admin-shared-sub",
+            password="password123",
+            email="admin-shared@example.com",
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=self.admin_user)
+
+    def test_category_list_includes_shared_subcategory(self):
+        beds = Category.objects.create(name="Beds", slug="beds-shared", sort_order=1)
+        sale = Category.objects.create(name="Sale", slug="sale-shared", sort_order=2)
+        subcategory = SubCategory.objects.create(name="Ottoman Beds", slug="ottoman-shared", category=beds)
+        subcategory.additional_categories.add(sale)
+
+        response = self.client.get("/api/categories/")
+
+        self.assertEqual(response.status_code, 200)
+        sale_payload = next(item for item in response.data if item["id"] == sale.id)
+        self.assertEqual([sub["id"] for sub in sale_payload["subcategories"]], [subcategory.id])
+
+    def test_subcategory_filter_includes_shared_category(self):
+        beds = Category.objects.create(name="Beds", slug="beds-filter-shared", sort_order=1)
+        sale = Category.objects.create(name="Sale", slug="sale-filter-shared", sort_order=2)
+        subcategory = SubCategory.objects.create(name="Storage Beds", slug="storage-shared", category=beds)
+        subcategory.additional_categories.add(sale)
+
+        response = self.client.get(f"/api/subcategories/?category={sale.id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["id"] for item in response.data], [subcategory.id])
+
+    def test_unlinking_primary_category_promotes_other_link_instead_of_deleting_subcategory(self):
+        beds = Category.objects.create(name="Beds", slug="beds-unlink", sort_order=1)
+        sale = Category.objects.create(name="Sale", slug="sale-unlink", sort_order=2)
+        subcategory = SubCategory.objects.create(name="Luxury Beds", slug="luxury-beds-unlink", category=beds)
+        subcategory.additional_categories.add(sale)
+
+        response = self.client.post(
+            f"/api/subcategories/{subcategory.id}/unlink-category/",
+            {"category": beds.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        subcategory.refresh_from_db()
+        self.assertEqual(subcategory.category_id, sale.id)
+        self.assertEqual(list(subcategory.additional_categories.values_list("id", flat=True)), [])
 
 
 class ProductSortOrderSwapTests(TestCase):

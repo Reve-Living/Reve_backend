@@ -276,7 +276,7 @@ class IsAdminOrReadOnly(IsAdminUser):
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
-    queryset = Category.objects.all().prefetch_related("subcategories").order_by("sort_order", "name")
+    queryset = Category.objects.all().order_by("sort_order", "name")
     serializer_class = CategorySerializer
     permission_classes = [IsAdminOrReadOnly]
     http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
@@ -335,7 +335,7 @@ class CategoryViewSet(viewsets.ModelViewSet):
 
 
 class SubCategoryViewSet(viewsets.ModelViewSet):
-    queryset = SubCategory.objects.all().order_by("sort_order", "name")
+    queryset = SubCategory.objects.all().select_related("category").prefetch_related("additional_categories").order_by("sort_order", "name")
     serializer_class = SubCategorySerializer
     permission_classes = [IsAdminOrReadOnly]
 
@@ -364,7 +364,7 @@ class SubCategoryViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         category_id = self.request.query_params.get("category")
         if category_id:
-            queryset = queryset.filter(category_id=category_id)
+            queryset = queryset.filter(Q(category_id=category_id) | Q(additional_categories__id=category_id)).distinct()
         return queryset
 
     def perform_create(self, serializer):
@@ -390,6 +390,43 @@ class SubCategoryViewSet(viewsets.ModelViewSet):
         response = super().destroy(request, *args, **kwargs)
         self._invalidate_cache()
         return response
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAdminUser], url_path="unlink-category")
+    def unlink_category(self, request, pk=None):
+        subcategory = self.get_object()
+        category_id = request.data.get("category")
+
+        try:
+            category_id = int(category_id)
+        except (TypeError, ValueError):
+            raise ValidationError({"category": "A valid category ID is required."})
+
+        linked_ids = subcategory.linked_category_ids()
+        if category_id not in linked_ids:
+            raise ValidationError({"category": "This subcategory is not linked to that category."})
+        if len(linked_ids) <= 1:
+            raise ValidationError({"category": "You must keep at least one category linked to this subcategory."})
+
+        with transaction.atomic():
+            if subcategory.category_id == category_id:
+                replacement_id = (
+                    subcategory.additional_categories.exclude(id=category_id)
+                    .order_by("id")
+                    .values_list("id", flat=True)
+                    .first()
+                )
+                if not replacement_id:
+                    raise ValidationError({"category": "No replacement category is available."})
+                subcategory.additional_categories.remove(replacement_id)
+                subcategory.category_id = replacement_id
+                subcategory.save(update_fields=["category"])
+            else:
+                subcategory.additional_categories.remove(category_id)
+
+        subcategory.refresh_from_db()
+        self._invalidate_cache()
+        serializer = self.get_serializer(subcategory)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class CollectionViewSet(viewsets.ModelViewSet):
@@ -1720,13 +1757,18 @@ class CategoryFiltersView(generics.GenericAPIView):
         sub_slug = request.query_params.get("subcategory")
         subcategory = None
         if sub_slug:
-            subcategory = SubCategory.objects.filter(slug=sub_slug, category=category).first()
+            subcategory = (
+                SubCategory.objects.filter(slug=sub_slug)
+                .filter(Q(category=category) | Q(additional_categories=category))
+                .distinct()
+                .first()
+            )
         
         # Get filters linked to this category
         category_filters = CategoryFilter.objects.filter(
-            Q(category=category) | Q(subcategory__category=category),
+            Q(category=category) | Q(subcategory__category=category) | Q(subcategory__additional_categories=category),
             is_active=True
-        )
+        ).distinct()
 
         # If subcategory is specified, prefer filters tied to it but still include category-level ones
         if subcategory:

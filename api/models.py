@@ -21,6 +21,11 @@ class Category(models.Model):
 
 class SubCategory(models.Model):
     category = models.ForeignKey(Category, related_name="subcategories", on_delete=models.CASCADE)
+    additional_categories = models.ManyToManyField(
+        Category,
+        related_name="shared_subcategories",
+        blank=True,
+    )
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True, max_length=255)
     description = models.TextField(blank=True)
@@ -34,6 +39,18 @@ class SubCategory(models.Model):
 
     def __str__(self) -> str:
         return f"{self.category.name} -> {self.name}"
+
+    def linked_category_ids(self):
+        extra_ids = list(self.additional_categories.values_list("id", flat=True))
+        return list(dict.fromkeys([self.category_id, *extra_ids]))
+
+    def is_linked_to_category(self, category_or_id) -> bool:
+        target_id = getattr(category_or_id, "id", category_or_id)
+        try:
+            target_id = int(target_id)
+        except (TypeError, ValueError):
+            return False
+        return target_id in self.linked_category_ids()
 
 
 class Collection(models.Model):

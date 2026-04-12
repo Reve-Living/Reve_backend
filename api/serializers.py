@@ -33,6 +33,15 @@ from .models import (
     DimensionRow,
 )
 
+
+def _subcategory_links_to_category(subcategory, category) -> bool:
+    if not subcategory or not category:
+        return False
+    return (
+        subcategory.category_id == category.id
+        or subcategory.additional_categories.filter(id=category.id).exists()
+    )
+
 def _clean_text(value, fallback=""):
     text = str(value or "").strip()
     return text or fallback
@@ -78,6 +87,12 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 class SubCategorySerializer(serializers.ModelSerializer):
+    additional_categories = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Category.objects.all(), required=False
+    )
+    linked_category_ids = serializers.SerializerMethodField()
+    main_category_name = serializers.CharField(source="category.name", read_only=True)
+
     def validate(self, attrs):
         attrs = super().validate(attrs)
         instance = getattr(self, "instance", None)
@@ -97,7 +112,22 @@ class SubCategorySerializer(serializers.ModelSerializer):
                 instance=instance,
                 fallback="subcategory",
             )
+
+        main_category = attrs.get("category", getattr(instance, "category", None))
+        additional_categories = attrs.get("additional_categories")
+        if additional_categories is None and instance is not None:
+            additional_categories = list(instance.additional_categories.all())
+
+        if main_category and additional_categories:
+            duplicate_ids = [cat.id for cat in additional_categories if cat.id == main_category.id]
+            if duplicate_ids:
+                raise serializers.ValidationError(
+                    {"additional_categories": "Main category is already selected as the primary category."}
+                )
         return attrs
+
+    def get_linked_category_ids(self, obj):
+        return obj.linked_category_ids()
 
     class Meta:
         model = SubCategory
@@ -105,7 +135,7 @@ class SubCategorySerializer(serializers.ModelSerializer):
 
 
 class CategorySerializer(serializers.ModelSerializer):
-    subcategories = SubCategorySerializer(many=True, read_only=True)
+    subcategories = serializers.SerializerMethodField()
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -131,6 +161,14 @@ class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
         fields = "__all__"
+
+    def get_subcategories(self, obj):
+        queryset = (
+            SubCategory.objects.filter(Q(category_id=obj.id) | Q(additional_categories__id=obj.id))
+            .distinct()
+            .order_by("sort_order", "name")
+        )
+        return SubCategorySerializer(queryset, many=True, context=self.context).data
 
     def update(self, instance, validated_data):
         new_sort_order = validated_data.get("sort_order", instance.sort_order)
@@ -934,7 +972,7 @@ class HeroSlideSerializer(serializers.ModelSerializer):
             )
 
         if selected_subcategories is not None and category:
-            invalid = [sub.name for sub in selected_subcategories if sub.category_id != category.id]
+            invalid = [sub.name for sub in selected_subcategories if not _subcategory_links_to_category(sub, category)]
             if invalid:
                 raise serializers.ValidationError(
                     {"selected_subcategories": f"These subcategories do not belong to {category.name}: {', '.join(invalid)}"}
@@ -942,7 +980,8 @@ class HeroSlideSerializer(serializers.ModelSerializer):
 
         if (incoming_cta is None or incoming_cta.strip() == ""):
             if subcategory:
-                attrs["cta_link"] = existing_cta or f"/category/{subcategory.category.slug}?sub={subcategory.slug}"
+                target_category = category if _subcategory_links_to_category(subcategory, category) else subcategory.category
+                attrs["cta_link"] = existing_cta or f"/category/{target_category.slug}?sub={subcategory.slug}"
             elif category:
                 attrs["cta_link"] = existing_cta or f"/category/{category.slug}/subcategories"
             else:
