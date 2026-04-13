@@ -461,6 +461,76 @@ class SubCategoryViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(subcategory)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=["post"], permission_classes=[IsAdminUser], url_path="promote-to-category")
+    def promote_to_category(self, request, pk=None):
+        subcategory = self.get_object()
+
+        with transaction.atomic():
+            category_payload = {
+                "name": subcategory.name,
+                "slug": subcategory.slug,
+                "description": subcategory.description,
+                "image": subcategory.image,
+                "show_in_collections": subcategory.show_in_collections,
+                "show_in_all_collections": subcategory.show_in_all_collections,
+                "image_alt_text": subcategory.image_alt_text,
+                "meta_title": subcategory.meta_title,
+                "meta_description": subcategory.meta_description,
+                "sort_order": subcategory.sort_order,
+            }
+            category_serializer = CategorySerializer(data=category_payload, context=self.get_serializer_context())
+            category_serializer.is_valid(raise_exception=True)
+            promoted_category = category_serializer.save()
+
+            product_count = Product.objects.filter(subcategory_id=subcategory.id).update(
+                category=promoted_category,
+                subcategory=None,
+            )
+
+            filter_count = CategoryFilter.objects.filter(subcategory_id=subcategory.id).update(
+                category=promoted_category,
+                subcategory=None,
+            )
+
+            promotion_count = 0
+            for promotion in Promotion.objects.filter(subcategories=subcategory).distinct():
+                promotion.categories.add(promoted_category)
+                promotion.subcategories.remove(subcategory)
+                promotion_count += 1
+
+            mattress_count = 0
+            for mattress in MattressOption.objects.filter(subcategories=subcategory).distinct():
+                mattress.categories.add(promoted_category)
+                mattress.subcategories.remove(subcategory)
+                mattress_count += 1
+
+            hero_slide_count = HeroSlide.objects.filter(subcategory_id=subcategory.id).update(
+                category=promoted_category,
+                subcategory=None,
+                cta_link=f"/category/{promoted_category.slug}",
+            )
+            HeroSlide.objects.filter(selected_subcategories=subcategory).update(category=promoted_category)
+            HeroSlide.selected_subcategories.through.objects.filter(subcategory_id=subcategory.id).delete()
+
+            promoted_name = subcategory.name
+            subcategory.delete()
+
+        self._invalidate_cache()
+        return Response(
+            {
+                "category": CategorySerializer(promoted_category, context=self.get_serializer_context()).data,
+                "migrated": {
+                    "products": product_count,
+                    "category_filters": filter_count,
+                    "promotions": promotion_count,
+                    "mattress_options": mattress_count,
+                    "hero_slides": hero_slide_count,
+                },
+                "message": f"{promoted_name} was promoted to a main category.",
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class CollectionViewSet(viewsets.ModelViewSet):
     queryset = Collection.objects.all().prefetch_related("products").order_by("sort_order", "name")
