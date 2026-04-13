@@ -765,6 +765,152 @@ class ProductViewSet(viewsets.ModelViewSet):
         self._invalidate_cache()
         return Response(ProductSerializer(product).data)
 
+    @action(detail=True, methods=["post"], permission_classes=[IsAdminUser], url_path="duplicate")
+    def duplicate(self, request, pk=None):
+        source = self.get_queryset().get(pk=pk)
+
+        with transaction.atomic():
+            duplicated_product = self._duplicate_product(source)
+
+        self._invalidate_cache()
+        refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=duplicated_product.pk)
+        return Response(ProductSerializer(refreshed).data, status=status.HTTP_201_CREATED)
+
+    def _build_duplicate_slug(self, product):
+        base = slugify(f"{product.slug or product.name}-copy") or "product-copy"
+        slug = base
+        counter = 2
+        while Product.objects.filter(slug=slug).exists():
+            slug = f"{base}-{counter}"
+            counter += 1
+        return slug
+
+    def _build_duplicate_name(self, product):
+        base = f"{product.name} (Copy)"
+        candidate = base
+        counter = 2
+        while Product.objects.filter(name=candidate).exists():
+            candidate = f"{base} {counter}"
+            counter += 1
+        return candidate
+
+    def _duplicate_product(self, source):
+        duplicated_product = Product.objects.create(
+            name=self._build_duplicate_name(source),
+            slug=self._build_duplicate_slug(source),
+            meta_title=source.meta_title,
+            meta_description=source.meta_description,
+            category=source.category,
+            subcategory=source.subcategory,
+            price=source.price,
+            original_price=source.original_price,
+            discount_percentage=source.discount_percentage,
+            description=source.description,
+            short_description=source.short_description,
+            features=source.features,
+            dimensions=source.dimensions,
+            faqs=source.faqs,
+            delivery_info=source.delivery_info,
+            returns_guarantee=source.returns_guarantee,
+            delivery_title=source.delivery_title,
+            returns_title=source.returns_title,
+            custom_info_sections=source.custom_info_sections,
+            delivery_charges=source.delivery_charges,
+            assembly_service_enabled=source.assembly_service_enabled,
+            assembly_service_price=source.assembly_service_price,
+            in_stock=source.in_stock,
+            is_hidden=True,
+            is_bestseller=source.is_bestseller,
+            is_new=source.is_new,
+            show_size_icons=source.show_size_icons,
+            rating=0,
+            review_count=0,
+            dimension_paragraph=source.dimension_paragraph,
+            dimension_note=source.dimension_note,
+            dimension_images=source.dimension_images,
+            show_dimensions_table=source.show_dimensions_table,
+            sort_order=0,
+        )
+
+        for image in source.images.all():
+            ProductImage.objects.create(
+                product=duplicated_product,
+                url=image.url,
+                color_name=image.color_name,
+                style_name=image.style_name,
+                alt_text=image.alt_text,
+                sort_order=image.sort_order,
+            )
+
+        for video in source.videos.all():
+            ProductVideo.objects.create(product=duplicated_product, url=video.url)
+
+        for color in source.colors.all():
+            ProductColor.objects.create(
+                product=duplicated_product,
+                name=color.name,
+                hex_code=color.hex_code,
+                image_url=color.image_url,
+            )
+
+        size_map = {}
+        for size in source.sizes.all():
+            cloned_size = ProductSize.objects.create(
+                product=duplicated_product,
+                name=size.name,
+                description=size.description,
+                price_delta=size.price_delta,
+            )
+            size_map[size.id] = cloned_size
+
+        for style in source.styles.all():
+            ProductStyle.objects.create(
+                product=duplicated_product,
+                size=size_map.get(style.size_id),
+                is_shared=style.is_shared,
+                name=style.name,
+                icon_url=style.icon_url,
+                options=style.options,
+            )
+
+        for fabric in source.fabrics.all():
+            ProductFabric.objects.create(
+                product=duplicated_product,
+                name=fabric.name,
+                image_url=fabric.image_url,
+                is_shared=fabric.is_shared,
+                colors=fabric.colors,
+            )
+
+        for mattress in source.mattresses.all():
+            ProductMattress.objects.create(
+                product=duplicated_product,
+                source_product=mattress.source_product,
+                name=mattress.name,
+                description=mattress.description,
+                image_url=mattress.image_url,
+                price=mattress.price,
+                enable_bunk_positions=mattress.enable_bunk_positions,
+                price_top=mattress.price_top,
+                price_bottom=mattress.price_bottom,
+                price_both=mattress.price_both,
+            )
+
+        for filter_value in source.filter_values.all():
+            ProductFilterValue.objects.create(
+                product=duplicated_product,
+                filter_option=filter_value.filter_option,
+            )
+
+        if hasattr(source, "dimension_template_link"):
+            ProductDimensionTemplate.objects.create(
+                product=duplicated_product,
+                template=source.dimension_template_link.template,
+                allow_overrides=source.dimension_template_link.allow_overrides,
+            )
+
+        return duplicated_product
+
     def _handle_related_data(self, product, images, videos, colors, sizes, styles, fabrics, mattresses):
         for img in images:
             ProductImage.objects.create(
@@ -773,6 +919,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 color_name=img.get("color_name", ""),
                 style_name=img.get("style_name", ""),
                 alt_text=img.get("alt_text", ""),
+                sort_order=img.get("sort_order", 0),
             )
         for vid in videos:
             ProductVideo.objects.create(product=product, url=vid.get("url"))

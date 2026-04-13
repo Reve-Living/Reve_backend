@@ -220,6 +220,10 @@ class ProductImage(models.Model):
     color_name = models.CharField(max_length=120, blank=True, default="")
     style_name = models.CharField(max_length=120, blank=True, default="")
     alt_text = models.CharField(max_length=255, blank=True, default="")
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
 
 
 class ProductVideo(models.Model):

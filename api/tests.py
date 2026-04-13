@@ -3,7 +3,19 @@ from django.test import TestCase, override_settings
 from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 
-from .models import Category, Product, SubCategory
+from .models import (
+    Category,
+    Product,
+    SubCategory,
+    ProductImage,
+    ProductSize,
+    ProductStyle,
+    ProductFilterValue,
+    FilterType,
+    FilterOption,
+    DimensionTemplate,
+    ProductDimensionTemplate,
+)
 
 
 @override_settings(
@@ -207,6 +219,100 @@ class SharedSubcategoryTests(TestCase):
         subcategory.refresh_from_db()
         self.assertEqual(subcategory.category_id, sale.id)
         self.assertEqual(list(subcategory.additional_categories.values_list("id", flat=True)), [])
+
+
+class ProductDuplicateTests(TestCase):
+    def test_admin_can_duplicate_product_with_related_records(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin-duplicate",
+            password="password123",
+            email="admin-duplicate@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Beds", slug="beds-duplicate", sort_order=1)
+        product = Product.objects.create(
+            name="Aria Bed",
+            slug="aria-bed",
+            category=category,
+            price="499.99",
+            short_description="Original short description",
+            description="Original long description",
+            in_stock=True,
+            is_hidden=False,
+            delivery_info="Delivery included",
+            sort_order=3,
+        )
+        ProductImage.objects.create(product=product, url="https://example.com/bed.jpg", alt_text="Main image")
+        size = ProductSize.objects.create(product=product, name="King", description="5ft", price_delta="25.00")
+        ProductStyle.objects.create(
+            product=product,
+            size=size,
+            name="Wingback",
+            icon_url="<svg></svg>",
+            options=[{"label": "Tall", "price_delta": 10}],
+        )
+        filter_type = FilterType.objects.create(name="Color", slug="color-duplicate")
+        filter_option = FilterOption.objects.create(
+            filter_type=filter_type,
+            name="Cream",
+            slug="cream-duplicate",
+        )
+        ProductFilterValue.objects.create(product=product, filter_option=filter_option)
+        template = DimensionTemplate.objects.create(name="Bed Template", slug="bed-template-duplicate")
+        ProductDimensionTemplate.objects.create(product=product, template=template, allow_overrides=True)
+
+        response = client.post(f"/api/products/{product.id}/duplicate/", format="json")
+
+        self.assertEqual(response.status_code, 201)
+        duplicated_id = response.data["id"]
+        self.assertNotEqual(duplicated_id, product.id)
+
+        duplicated = Product.objects.get(pk=duplicated_id)
+        self.assertEqual(duplicated.name, "Aria Bed (Copy)")
+        self.assertTrue(duplicated.slug.startswith("aria-bed-copy"))
+        self.assertTrue(duplicated.is_hidden)
+        self.assertEqual(duplicated.sort_order, 0)
+        self.assertEqual(duplicated.rating, 0)
+        self.assertEqual(duplicated.review_count, 0)
+        self.assertEqual(duplicated.images.count(), 1)
+        self.assertEqual(duplicated.sizes.count(), 1)
+        self.assertEqual(duplicated.styles.count(), 1)
+        self.assertEqual(duplicated.filter_values.count(), 1)
+        self.assertTrue(hasattr(duplicated, "dimension_template_link"))
+        self.assertEqual(duplicated.dimension_template_link.template_id, template.id)
+        self.assertNotEqual(duplicated.sizes.first().id, size.id)
+        self.assertEqual(duplicated.styles.first().size_id, duplicated.sizes.first().id)
+
+
+class ProductImageOrderTests(TestCase):
+    def test_product_images_are_returned_in_sort_order(self):
+        category = Category.objects.create(name="Beds", slug="beds-images-order", sort_order=1)
+        product = Product.objects.create(
+            name="Image Order Bed",
+            slug="image-order-bed",
+            category=category,
+            price="499.99",
+            short_description="Short",
+            description="Long",
+        )
+        ProductImage.objects.create(product=product, url="https://example.com/third.jpg", sort_order=3)
+        ProductImage.objects.create(product=product, url="https://example.com/first.jpg", sort_order=1)
+        ProductImage.objects.create(product=product, url="https://example.com/second.jpg", sort_order=2)
+
+        response = APIClient().get(f"/api/products/?slug={product.slug}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [image["url"] for image in response.data[0]["images"]],
+            [
+                "https://example.com/first.jpg",
+                "https://example.com/second.jpg",
+                "https://example.com/third.jpg",
+            ],
+        )
 
 
 class ProductSortOrderSwapTests(TestCase):
