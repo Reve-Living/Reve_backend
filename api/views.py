@@ -276,7 +276,34 @@ class IsAdminOrReadOnly(IsAdminUser):
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
-    queryset = Category.objects.all().order_by("sort_order", "name")
+    queryset = Category.objects.all().prefetch_related(
+        Prefetch(
+            "subcategories",
+            queryset=SubCategory.objects.select_related("category")
+            .prefetch_related(
+                Prefetch(
+                    "additional_categories",
+                    queryset=Category.objects.only("id", "name", "slug"),
+                    to_attr="_prefetched_additional_categories",
+                )
+            )
+            .order_by("sort_order", "name"),
+            to_attr="prefetched_primary_subcategories",
+        ),
+        Prefetch(
+            "shared_subcategories",
+            queryset=SubCategory.objects.select_related("category")
+            .prefetch_related(
+                Prefetch(
+                    "additional_categories",
+                    queryset=Category.objects.only("id", "name", "slug"),
+                    to_attr="_prefetched_additional_categories",
+                )
+            )
+            .order_by("sort_order", "name"),
+            to_attr="prefetched_shared_subcategories",
+        ),
+    ).order_by("sort_order", "name")
     serializer_class = CategorySerializer
     permission_classes = [IsAdminOrReadOnly]
     http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
@@ -334,7 +361,13 @@ class CategoryViewSet(viewsets.ModelViewSet):
 
 
 class SubCategoryViewSet(viewsets.ModelViewSet):
-    queryset = SubCategory.objects.all().select_related("category").prefetch_related("additional_categories").order_by("sort_order", "name")
+    queryset = SubCategory.objects.all().select_related("category").prefetch_related(
+        Prefetch(
+            "additional_categories",
+            queryset=Category.objects.only("id", "name", "slug"),
+            to_attr="_prefetched_additional_categories",
+        )
+    ).order_by("sort_order", "name")
     serializer_class = SubCategorySerializer
     permission_classes = [IsAdminOrReadOnly]
 

@@ -37,10 +37,7 @@ from .models import (
 def _subcategory_links_to_category(subcategory, category) -> bool:
     if not subcategory or not category:
         return False
-    return (
-        subcategory.category_id == category.id
-        or subcategory.additional_categories.filter(id=category.id).exists()
-    )
+    return category.id in subcategory.linked_category_ids()
 
 def _clean_text(value, fallback=""):
     text = str(value or "").strip()
@@ -163,12 +160,29 @@ class CategorySerializer(serializers.ModelSerializer):
         fields = "__all__"
 
     def get_subcategories(self, obj):
-        queryset = (
-            SubCategory.objects.filter(Q(category_id=obj.id) | Q(additional_categories__id=obj.id))
-            .distinct()
-            .order_by("sort_order", "name")
-        )
-        return SubCategorySerializer(queryset, many=True, context=self.context).data
+        primary_subcategories = getattr(obj, "prefetched_primary_subcategories", None)
+        shared_subcategories = getattr(obj, "prefetched_shared_subcategories", None)
+
+        if primary_subcategories is None and shared_subcategories is None:
+            queryset = (
+                SubCategory.objects.filter(Q(category_id=obj.id) | Q(additional_categories__id=obj.id))
+                .select_related("category")
+                .prefetch_related("additional_categories")
+                .distinct()
+                .order_by("sort_order", "name")
+            )
+            return SubCategorySerializer(queryset, many=True, context=self.context).data
+
+        combined = []
+        seen_ids = set()
+        for subcategory in [*(primary_subcategories or []), *(shared_subcategories or [])]:
+            if subcategory.id in seen_ids:
+                continue
+            combined.append(subcategory)
+            seen_ids.add(subcategory.id)
+
+        combined.sort(key=lambda subcategory: (int(subcategory.sort_order or 0), subcategory.name.lower()))
+        return SubCategorySerializer(combined, many=True, context=self.context).data
 
     def update(self, instance, validated_data):
         new_sort_order = validated_data.get("sort_order", instance.sort_order)

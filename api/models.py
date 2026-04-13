@@ -41,7 +41,11 @@ class SubCategory(models.Model):
         return f"{self.category.name} -> {self.name}"
 
     def linked_category_ids(self):
-        extra_ids = list(self.additional_categories.values_list("id", flat=True))
+        prefetched_categories = getattr(self, "_prefetched_additional_categories", None)
+        if prefetched_categories is not None:
+            extra_ids = [category.id for category in prefetched_categories]
+        else:
+            extra_ids = list(self.additional_categories.values_list("id", flat=True))
         return list(dict.fromkeys([self.category_id, *extra_ids]))
 
     def is_linked_to_category(self, category_or_id) -> bool:
