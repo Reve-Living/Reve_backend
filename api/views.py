@@ -656,22 +656,12 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         cache.clear()
 
-    @method_decorator(cache_page(60 * 2))
-    def _cached_list(self, request, *args, **kwargs):
-        """
-        Cache public product lists briefly so category pages load faster.
-        """
-        return super().list(request, *args, **kwargs)
-
     def list(self, request, *args, **kwargs):
         """
-        Keep admin traffic fully fresh while allowing public storefront reads to use
-        short-lived caching.
+        Product visibility and catalog membership should reflect admin changes
+        immediately on the storefront, so keep product lists fully fresh.
         """
-        has_auth_header = bool(request.headers.get("Authorization"))
-        if getattr(request.user, "is_staff", False) or has_auth_header:
-            return super().list(request, *args, **kwargs)
-        return self._cached_list(request, *args, **kwargs)
+        return super().list(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         data = request.data.copy()
