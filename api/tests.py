@@ -314,6 +314,41 @@ class ProductImageOrderTests(TestCase):
             ],
         )
 
+    def test_product_detail_includes_admin_selected_suggested_products(self):
+        category = Category.objects.create(name="Beds", slug="beds-suggested", sort_order=1)
+        product = Product.objects.create(
+            name="Main Bed",
+            slug="main-bed",
+            category=category,
+            price="499.99",
+            short_description="Short",
+            description="Long",
+        )
+        suggested = Product.objects.create(
+            name="Suggested Bed",
+            slug="suggested-bed",
+            category=category,
+            price="599.99",
+            short_description="Suggested",
+            description="Suggested description",
+        )
+        hidden = Product.objects.create(
+            name="Hidden Suggested Bed",
+            slug="hidden-suggested-bed",
+            category=category,
+            price="699.99",
+            short_description="Hidden",
+            description="Hidden description",
+            is_hidden=True,
+        )
+        product.suggested_products.set([suggested, hidden])
+
+        response = APIClient().get(f"/api/products/?slug={product.slug}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertCountEqual(response.data[0]["suggested_products"], [suggested.id, hidden.id])
+        self.assertEqual([item["id"] for item in response.data[0]["suggested_products_data"]], [suggested.id])
+
 
 class ProductSortOrderSwapTests(TestCase):
     def test_public_product_list_hides_hidden_products(self):

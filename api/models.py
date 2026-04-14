@@ -171,6 +171,12 @@ class Product(models.Model):
     subcategory = models.ForeignKey(
         SubCategory, related_name="products", on_delete=models.SET_NULL, null=True, blank=True
     )
+    suggested_products = models.ManyToManyField(
+        "self",
+        symmetrical=False,
+        blank=True,
+        related_name="suggested_for_products",
+    )
     price = models.DecimalField(max_digits=10, decimal_places=2)
     original_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     discount_percentage = models.IntegerField(default=0)

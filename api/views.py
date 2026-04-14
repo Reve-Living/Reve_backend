@@ -668,6 +668,14 @@ class ProductViewSet(viewsets.ModelViewSet):
         "fabrics",
         "mattresses",
         "dimension_template_link__template__rows",
+        Prefetch(
+            "suggested_products",
+            queryset=Product.objects.filter(is_hidden=False)
+            .select_related("category", "subcategory")
+            .prefetch_related("images", "sizes")
+            .order_by("sort_order", "-created_at"),
+            to_attr="prefetched_suggested_products",
+        ),
     ]
 
     def _base_queryset(self):
@@ -891,6 +899,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             show_dimensions_table=source.show_dimensions_table,
             sort_order=0,
         )
+        duplicated_product.suggested_products.set(source.suggested_products.exclude(pk=source.pk))
 
         for image in source.images.all():
             ProductImage.objects.create(

@@ -388,6 +388,8 @@ class ProductSerializer(serializers.ModelSerializer):
     subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
     category_slug = serializers.ReadOnlyField(source="category.slug")
     subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
+    suggested_products = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
+    suggested_products_data = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -447,7 +449,20 @@ class ProductSerializer(serializers.ModelSerializer):
             "subcategory_name",
             "category_slug",
             "subcategory_slug",
+            "suggested_products",
+            "suggested_products_data",
         )
+
+    def get_suggested_products_data(self, obj):
+        queryset = getattr(obj, "prefetched_suggested_products", None)
+        if queryset is None:
+            queryset = (
+                obj.suggested_products.filter(is_hidden=False)
+                .select_related("category", "subcategory")
+                .prefetch_related("images", "sizes")
+                .order_by("sort_order", "-created_at")
+            )
+        return ProductListSerializer(queryset, many=True).data
 
     def get_mattresses(self, obj):
         """
@@ -594,6 +609,8 @@ class ProductListSerializer(serializers.ModelSerializer):
     original_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     rating = serializers.DecimalField(max_digits=3, decimal_places=1, read_only=True)
     review_count = serializers.IntegerField(read_only=True)
+    category_name = serializers.ReadOnlyField(source="category.name")
+    subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
     category_slug = serializers.ReadOnlyField(source="category.slug")
     subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
     filter_values = serializers.SerializerMethodField()
@@ -624,6 +641,9 @@ class ProductListSerializer(serializers.ModelSerializer):
             "sort_order",
             "assembly_service_enabled",
             "assembly_service_price",
+            "short_description",
+            "category_name",
+            "subcategory_name",
             "category_slug",
             "subcategory_slug",
             "filter_values",
@@ -662,6 +682,11 @@ class ProductWriteSerializer(serializers.ModelSerializer):
     mattresses = ProductMattressSerializer(many=True, required=False)
     dimension_template = serializers.IntegerField(required=False, allow_null=True, write_only=True)
     filter_values = serializers.ListField(child=serializers.DictField(), required=False)
+    suggested_products = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=Product.objects.all(),
+        required=False,
+    )
 
     class Meta:
         model = Product
@@ -710,6 +735,7 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             "mattresses",
             "dimension_template",
             "filter_values",
+            "suggested_products",
             "sort_order",
         )
 
@@ -808,6 +834,7 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         # Internal helper used by the view; not a Product model field.
         validated_data.pop("_dimension_template_obj", None)
         filter_values = validated_data.pop("filter_values", [])
+        suggested_products = validated_data.pop("suggested_products", [])
         new_sort_order = validated_data.get("sort_order", 0)
 
         with transaction.atomic():
@@ -815,12 +842,14 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             self._reorder_products(product, new_sort_order, previous_sort_order=0)
 
             self._sync_filter_values(product, filter_values)
+            product.suggested_products.set([item for item in suggested_products if item.pk != product.pk])
             return product
 
     def update(self, instance, validated_data):
         # Internal helper used by the view; not a Product model field.
         validated_data.pop("_dimension_template_obj", None)
         filter_values = validated_data.pop("filter_values", None)
+        suggested_products = validated_data.pop("suggested_products", None)
         previous_sort_order = instance.sort_order
         previous_category_id = instance.category_id
         previous_subcategory_id = instance.subcategory_id
@@ -835,6 +864,8 @@ class ProductWriteSerializer(serializers.ModelSerializer):
                 self._reorder_products(product, new_sort_order, previous_sort_order=previous_sort_order)
             if filter_values is not None:
                 self._sync_filter_values(product, filter_values)
+            if suggested_products is not None:
+                product.suggested_products.set([item for item in suggested_products if item.pk != product.pk])
             return product
 
     def _reorder_products(self, product, requested_sort_order, previous_sort_order=0):
