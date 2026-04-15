@@ -13,11 +13,12 @@ from django.core.files.base import ContentFile
 from django.contrib.auth.models import User
 from django.utils.text import slugify
 from django.db import transaction
-from django.db.models import Prefetch, Q, Case, When, Value, IntegerField
+from django.db.models import Prefetch, Q, Case, When, Value, IntegerField, OuterRef, Subquery
 from django.core.cache import cache
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
-from django.http import HttpResponse
+from django.http import HttpResponse, StreamingHttpResponse
+from xml.sax.saxutils import escape
 from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
@@ -191,6 +192,94 @@ def _build_promotion_result(*, code: str, items_payload: list[dict]):
 
 def _get_announcement_settings():
     return AnnouncementSettings.get_solo()
+
+
+def _normalize_base_url(raw_url: str, fallback: str = "") -> str:
+    base = (raw_url or fallback or "").strip()
+    if not base:
+        return ""
+    if not re.match(r"^https?://", base, flags=re.IGNORECASE):
+        base = f"https://{base}"
+    return f"{base.rstrip('/')}/"
+
+
+def _to_absolute_url(raw_url: str, base_url: str) -> str:
+    value = (raw_url or "").strip()
+    if not value:
+        return ""
+    if value.startswith(("http://", "https://")):
+        return value
+    if value.startswith("//"):
+        return f"https:{value}"
+    return urljoin(base_url, value.lstrip("/"))
+
+
+def _build_google_feed_item_xml(product, frontend_base_url: str, backend_base_url: str) -> str:
+    product_link = urljoin(frontend_base_url, f"product/{product.slug}/")
+    product_image = _to_absolute_url(getattr(product, "primary_image_url", ""), backend_base_url)
+    description = (product.short_description or product.description or product.name or "").strip()
+    availability = "in stock" if product.in_stock else "out of stock"
+    price_text = f"{Decimal(product.price).quantize(TWOPLACES)} GBP"
+    brand = (getattr(product.category, "name", "") or "Reve Living").strip()
+    mpn = f"REVE-{product.id}"
+
+    lines = [
+        "    <item>",
+        f"      <g:id>{product.id}</g:id>",
+        f"      <g:title>{escape(product.name)}</g:title>",
+        f"      <g:description>{escape(description)}</g:description>",
+        f"      <g:link>{escape(product_link)}</g:link>",
+        f"      <g:image_link>{escape(product_image)}</g:image_link>",
+        f"      <g:availability>{availability}</g:availability>",
+        f"      <g:price>{price_text}</g:price>",
+        "      <g:condition>new</g:condition>",
+        f"      <g:brand>{escape(brand)}</g:brand>",
+        f"      <g:mpn>{escape(mpn)}</g:mpn>",
+        "    </item>",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def google_feed_xml(request):
+    frontend_base_url = _normalize_base_url(
+        getattr(settings, "FRONTEND_URL", ""),
+        os.getenv("FRONTEND_URL", ""),
+    )
+    if not frontend_base_url:
+        frontend_base_url = _normalize_base_url(request.build_absolute_uri("/"))
+
+    backend_base_url = _normalize_base_url(
+        getattr(settings, "BACKEND_URL", ""),
+        request.build_absolute_uri("/"),
+    )
+
+    primary_image_subquery = (
+        ProductImage.objects.filter(product_id=OuterRef("pk"))
+        .order_by("sort_order", "id")
+        .values("url")[:1]
+    )
+    products = (
+        Product.objects.filter(is_hidden=False)
+        .select_related("category")
+        .annotate(primary_image_url=Subquery(primary_image_subquery))
+        .only("id", "name", "slug", "description", "short_description", "price", "in_stock", "category__name")
+        .order_by("id")
+    )
+
+    def _xml_stream():
+        channel_link = backend_base_url.rstrip("/")
+        yield '<?xml version="1.0" encoding="UTF-8"?>\n'
+        yield '<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">\n'
+        yield "  <channel>\n"
+        yield "    <title>Reve Living Product Feed</title>\n"
+        yield f"    <link>{escape(channel_link)}</link>\n"
+        yield "    <description>Google Merchant Center product feed for Reve Living</description>\n"
+        for product in products.iterator(chunk_size=500):
+            yield _build_google_feed_item_xml(product, frontend_base_url, backend_base_url)
+        yield "  </channel>\n"
+        yield "</rss>\n"
+
+    return StreamingHttpResponse(_xml_stream(), content_type="application/xml; charset=utf-8")
 
 
 class HealthCheckView(APIView):
