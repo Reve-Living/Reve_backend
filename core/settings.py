@@ -231,6 +231,7 @@ CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 
 # External services
 BACKEND_URL = os.getenv("BACKEND_URL", "https://level-antoinette-sagiyqwgey-311e9cc7.koyeb.app/")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://www.reveliving.co.uk/")
 
 STRIPE_SECRET_KEY = _clean_stripe_key(
     os.getenv("STRIPE_SECRET_KEY") or os.getenv("STRIPE_API_KEY") or os.getenv("STRIPE_SK") or ""
