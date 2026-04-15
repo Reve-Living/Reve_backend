@@ -1,4 +1,5 @@
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Q, Case, When, Value, IntegerField
 from django.utils.text import slugify
@@ -494,7 +495,11 @@ class ProductSerializer(serializers.ModelSerializer):
                 | Q(categories__isnull=True, subcategories__isnull=True)
             ).distinct()
 
-        base_items = MattressOptionSerializer(options, many=True).data
+        cache_key = f"mattress-options:product-detail:v1:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
+        base_items = cache.get(cache_key)
+        if base_items is None:
+            base_items = list(MattressOptionSerializer(options, many=True).data)
+            cache.set(cache_key, base_items, 60 * 5)
         overrides = getattr(obj, "mattresses", None)
         override_items = list(overrides.all()) if overrides is not None else []
         override_lookup = {
@@ -953,7 +958,7 @@ class ProductWriteSerializer(serializers.ModelSerializer):
 class CollectionSerializer(serializers.ModelSerializer):
     slug = serializers.CharField(required=False, allow_blank=True)
     products = serializers.PrimaryKeyRelatedField(many=True, queryset=Product.objects.all(), required=False)
-    products_data = ProductSerializer(source="products", many=True, read_only=True)
+    products_data = ProductListSerializer(source="products", many=True, read_only=True)
 
     def validate(self, attrs):
         attrs = super().validate(attrs)

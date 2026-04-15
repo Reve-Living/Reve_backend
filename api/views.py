@@ -535,7 +535,57 @@ class SubCategoryViewSet(viewsets.ModelViewSet):
 
 
 class CollectionViewSet(viewsets.ModelViewSet):
-    queryset = Collection.objects.all().prefetch_related("products").order_by("sort_order", "name")
+    queryset = (
+        Collection.objects.all()
+        .prefetch_related(
+            Prefetch(
+                "products",
+                queryset=Product.objects.select_related("category", "subcategory")
+                .only(
+                    "id",
+                    "name",
+                    "slug",
+                    "meta_title",
+                    "meta_description",
+                    "category_id",
+                    "subcategory_id",
+                    "price",
+                    "original_price",
+                    "discount_percentage",
+                    "in_stock",
+                    "is_hidden",
+                    "is_bestseller",
+                    "is_new",
+                    "show_size_icons",
+                    "rating",
+                    "review_count",
+                    "dimension_paragraph",
+                    "dimension_note",
+                    "show_dimensions_table",
+                    "sort_order",
+                    "assembly_service_enabled",
+                    "assembly_service_price",
+                    "short_description",
+                    "created_at",
+                    "category__name",
+                    "category__slug",
+                    "subcategory__name",
+                    "subcategory__slug",
+                )
+                .prefetch_related(
+                    "images",
+                    "sizes",
+                    Prefetch(
+                        "filter_values",
+                        queryset=ProductFilterValue.objects.select_related("filter_option__filter_type"),
+                        to_attr="filter_values_all",
+                    ),
+                )
+                .order_by("sort_order", "-created_at")
+            )
+        )
+        .order_by("sort_order", "name")
+    )
     serializer_class = CollectionSerializer
     permission_classes = [IsAdminOrReadOnly]
 
@@ -796,17 +846,33 @@ class ProductViewSet(viewsets.ModelViewSet):
         the process cache, and the short TTL smooths over cold Render/Neon waits.
         """
         is_admin_request = bool(request.user and request.user.is_authenticated and request.user.is_staff)
-        can_cache = request.method == "GET" and not is_admin_request and not request.query_params.get("slug")
+        can_cache = request.method == "GET" and not is_admin_request
         if not can_cache:
             return super().list(request, *args, **kwargs)
 
         query_string = urlencode(sorted(request.query_params.lists()), doseq=True)
-        cache_key = f"product-list:v3:{query_string}"
+        cache_key = f"product-list:v4:{query_string}"
         cached_data = cache.get(cache_key)
         if cached_data is not None:
             return Response(cached_data)
 
         response = super().list(request, *args, **kwargs)
+        if response.status_code == status.HTTP_200_OK:
+            cache.set(cache_key, response.data, 60 * 2)
+        return response
+
+    def retrieve(self, request, *args, **kwargs):
+        is_admin_request = bool(request.user and request.user.is_authenticated and request.user.is_staff)
+        can_cache = request.method == "GET" and not is_admin_request
+        if not can_cache:
+            return super().retrieve(request, *args, **kwargs)
+
+        cache_key = f"product-detail:v2:{kwargs.get(self.lookup_field or 'pk')}"
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return Response(cached_data)
+
+        response = super().retrieve(request, *args, **kwargs)
         if response.status_code == status.HTTP_200_OK:
             cache.set(cache_key, response.data, 60 * 2)
         return response
@@ -1385,6 +1451,9 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminOrReadOnly]
     http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
 
+    def _invalidate_cache(self):
+        cache.clear()
+
     def get_queryset(self):
         return (
             super()
@@ -1478,6 +1547,7 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
             option.categories.set(categories)
         if subcategories is not None:
             option.subcategories.set(subcategories)
+        self._invalidate_cache()
         return Response(self.get_serializer(option).data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
@@ -1499,7 +1569,13 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
             option.categories.set(categories)
         if subcategories is not None:
             option.subcategories.set(subcategories)
+        self._invalidate_cache()
         return Response(self.get_serializer(option).data)
+
+    def destroy(self, request, *args, **kwargs):
+        response = super().destroy(request, *args, **kwargs)
+        self._invalidate_cache()
+        return response
 
 
 class ProductMattressAdminViewSet(viewsets.ModelViewSet):
@@ -1509,6 +1585,19 @@ class ProductMattressAdminViewSet(viewsets.ModelViewSet):
     serializer_class = ProductMattressSerializer
     permission_classes = [IsAdminUser]
     http_method_names = ["get", "patch", "delete", "head", "options"]
+
+    def _invalidate_cache(self):
+        cache.clear()
+
+    def partial_update(self, request, *args, **kwargs):
+        response = super().partial_update(request, *args, **kwargs)
+        self._invalidate_cache()
+        return response
+
+    def destroy(self, request, *args, **kwargs):
+        response = super().destroy(request, *args, **kwargs)
+        self._invalidate_cache()
+        return response
 
 
 class PromotionViewSet(viewsets.ModelViewSet):
