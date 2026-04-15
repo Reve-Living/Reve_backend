@@ -218,6 +218,13 @@ class Product(models.Model):
 
     class Meta:
         ordering = ["sort_order", "-created_at"]
+        indexes = [
+            models.Index(fields=["category", "sort_order", "-created_at"], name="prod_cat_order_idx"),
+            models.Index(fields=["subcategory", "sort_order", "-created_at"], name="prod_subcat_order_idx"),
+            models.Index(fields=["is_hidden", "category"], name="prod_hidden_cat_idx"),
+            models.Index(fields=["is_bestseller", "is_hidden"], name="prod_bestseller_idx"),
+            models.Index(fields=["is_new", "is_hidden"], name="prod_new_idx"),
+        ]
 
 
 class ProductImage(models.Model):
@@ -541,6 +548,10 @@ class ProductFilterValue(models.Model):
     
     class Meta:
         unique_together = ['product', 'filter_option']
+        indexes = [
+            models.Index(fields=["filter_option", "product"], name="pfv_option_product_idx"),
+            models.Index(fields=["product", "filter_option"], name="pfv_product_option_idx"),
+        ]
     
     def __str__(self):
         return f"{self.product.name} - {self.filter_option}"

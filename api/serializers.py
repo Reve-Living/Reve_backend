@@ -623,6 +623,8 @@ class ProductListSerializer(serializers.ModelSerializer):
             "slug",
             "meta_title",
             "meta_description",
+            "category",
+            "subcategory",
             "price",
             "original_price",
             "discount_percentage",
@@ -665,6 +667,34 @@ class ProductListSerializer(serializers.ModelSerializer):
                 }
             )
         return result
+
+
+class ProductSummarySerializer(serializers.ModelSerializer):
+    price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    category_name = serializers.ReadOnlyField(source="category.name")
+    subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
+    category_slug = serializers.ReadOnlyField(source="category.slug")
+    subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
+
+    class Meta:
+        model = Product
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "category",
+            "subcategory",
+            "price",
+            "in_stock",
+            "is_hidden",
+            "is_bestseller",
+            "is_new",
+            "sort_order",
+            "category_name",
+            "subcategory_name",
+            "category_slug",
+            "subcategory_slug",
+        ]
 
 
 class ProductWriteSerializer(serializers.ModelSerializer):

@@ -5,7 +5,7 @@ import requests
 from requests.adapters import HTTPAdapter, Retry
 import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 
 from django.conf import settings
 from django.core.files.storage import default_storage
@@ -14,6 +14,7 @@ from django.contrib.auth.models import User
 from django.utils.text import slugify
 from django.db import transaction
 from django.db.models import Prefetch, Q, Case, When, Value, IntegerField
+from django.core.cache import cache
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 from django.http import HttpResponse
@@ -59,6 +60,7 @@ from .serializers import (
     CategorySerializer,
     SubCategorySerializer,
     ProductSerializer,
+    ProductSummarySerializer,
     ProductWriteSerializer,
     OrderSerializer,
     ReviewSerializer,
@@ -677,11 +679,54 @@ class ProductViewSet(viewsets.ModelViewSet):
             to_attr="prefetched_suggested_products",
         ),
     ]
+    _list_only_fields = [
+        "id",
+        "name",
+        "slug",
+        "meta_title",
+        "meta_description",
+        "category_id",
+        "subcategory_id",
+        "price",
+        "original_price",
+        "discount_percentage",
+        "in_stock",
+        "is_hidden",
+        "is_bestseller",
+        "is_new",
+        "show_size_icons",
+        "rating",
+        "review_count",
+        "dimension_paragraph",
+        "dimension_note",
+        "show_dimensions_table",
+        "sort_order",
+        "assembly_service_enabled",
+        "assembly_service_price",
+        "short_description",
+        "created_at",
+    ]
+    _summary_only_fields = [
+        "id",
+        "name",
+        "slug",
+        "category_id",
+        "subcategory_id",
+        "price",
+        "in_stock",
+        "is_hidden",
+        "is_bestseller",
+        "is_new",
+        "sort_order",
+        "created_at",
+    ]
 
     def _base_queryset(self):
         return Product.objects.select_related("category", "subcategory")
 
     def get_serializer_class(self):
+        if self.action == "list" and self.request.query_params.get("summary") in ("1", "true", "True"):
+            return ProductSummarySerializer
         if self.action == "list" and not self.request.query_params.get("slug"):
             from .serializers import ProductListSerializer
             return ProductListSerializer
@@ -692,8 +737,20 @@ class ProductViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         # Choose a lighter prefetch set for list views (most traffic)
         is_list = self.action == "list" and not self.request.query_params.get("slug")
-        prefetches = self._list_prefetches if is_list else self._detail_prefetches
-        queryset = self._base_queryset().prefetch_related(*prefetches)
+        is_summary = is_list and self.request.query_params.get("summary") in ("1", "true", "True")
+        if is_summary:
+            queryset = self._base_queryset().only(*self._summary_only_fields, "category__name", "category__slug", "subcategory__name", "subcategory__slug")
+        else:
+            prefetches = self._list_prefetches if is_list else self._detail_prefetches
+            queryset = self._base_queryset().prefetch_related(*prefetches)
+            if is_list:
+                queryset = queryset.only(
+                    *self._list_only_fields,
+                    "category__name",
+                    "category__slug",
+                    "subcategory__name",
+                    "subcategory__slug",
+                )
         is_admin_request = bool(self.request.user and self.request.user.is_authenticated and self.request.user.is_staff)
         if not is_admin_request:
             queryset = queryset.filter(is_hidden=False)
@@ -715,8 +772,9 @@ class ProductViewSet(viewsets.ModelViewSet):
         if slug:
             queryset = queryset.filter(slug=slug)
         
-        # Apply dynamic filters from filter system
-        filter_types = FilterType.objects.filter(is_active=True)
+        # Apply dynamic filters from filter system only when relevant query params exist.
+        request_keys = set(self.request.query_params.keys())
+        filter_types = FilterType.objects.filter(is_active=True, slug__in=request_keys)
         for ft in filter_types:
             filter_values = self.request.query_params.get(ft.slug)
             if filter_values:
@@ -730,16 +788,28 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def _invalidate_cache(self):
         """Drop cached product lists after admin changes."""
-        from django.core.cache import cache
-
         cache.clear()
 
     def list(self, request, *args, **kwargs):
         """
-        Product visibility and catalog membership should reflect admin changes
-        immediately on the storefront, so keep product lists fully fresh.
+        Cache anonymous storefront product lists briefly. Admin mutations clear
+        the process cache, and the short TTL smooths over cold Render/Neon waits.
         """
-        return super().list(request, *args, **kwargs)
+        is_admin_request = bool(request.user and request.user.is_authenticated and request.user.is_staff)
+        can_cache = request.method == "GET" and not is_admin_request and not request.query_params.get("slug")
+        if not can_cache:
+            return super().list(request, *args, **kwargs)
+
+        query_string = urlencode(sorted(request.query_params.lists()), doseq=True)
+        cache_key = f"product-list:v3:{query_string}"
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return Response(cached_data)
+
+        response = super().list(request, *args, **kwargs)
+        if response.status_code == status.HTTP_200_OK:
+            cache.set(cache_key, response.data, 60 * 2)
+        return response
 
     def create(self, request, *args, **kwargs):
         data = request.data.copy()
