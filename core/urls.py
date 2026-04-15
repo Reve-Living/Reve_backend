@@ -18,10 +18,12 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from api.views import google_feed_xml
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('api.urls')),
+    path('google-feed.xml', google_feed_xml, name='google-feed-xml'),
 ]
 
 # Only mount local media URLs in development when MEDIA_URL is relative.
