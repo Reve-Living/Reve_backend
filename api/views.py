@@ -214,19 +214,110 @@ def _to_absolute_url(raw_url: str, base_url: str) -> str:
     return urljoin(base_url, value.lstrip("/"))
 
 
-def _build_google_feed_item_xml(product, frontend_base_url: str, backend_base_url: str) -> str:
+# Google Merchant Center category mapping
+GOOGLE_PRODUCT_CATEGORY_MAP = {
+    # Beds & Mattresses
+    "beds": "Furniture > Beds & Bed Frames",
+    "mattresses": "Furniture > Mattresses",
+    # Sofas & Seating
+    "sofas": "Furniture > Sofas & Couches",
+    "armchairs": "Furniture > Armchairs & Accent Chairs",
+    "seating": "Furniture > Seating",
+    "chairs": "Furniture > Chairs",
+    "stools": "Furniture > Ottomans & Poufs",
+    # Storage
+    "storage": "Furniture > Storage & Organization",
+    "wardrobes": "Furniture > Dressers & Chest of Drawers",
+    "shelving": "Furniture > Shelves & Shelving Units",
+    # Tables & Desks
+    "tables": "Furniture > Tables",
+    "dining": "Furniture > Dining Tables",
+    "coffee-tables": "Furniture > Coffee Tables",
+    "desks": "Furniture > Desks",
+    # Default fallback
+    "default": "Furniture",
+}
+
+
+def _get_google_product_category(category_name: str) -> str:
+    """Map internal category to Google Merchant category."""
+    if not category_name:
+        return GOOGLE_PRODUCT_CATEGORY_MAP["default"]
+    
+    category_lower = category_name.lower().strip()
+    
+    # Exact match
+    if category_lower in GOOGLE_PRODUCT_CATEGORY_MAP:
+        return GOOGLE_PRODUCT_CATEGORY_MAP[category_lower]
+    
+    # Substring match
+    for key, value in GOOGLE_PRODUCT_CATEGORY_MAP.items():
+        if key != "default" and key in category_lower:
+            return value
+    
+    return GOOGLE_PRODUCT_CATEGORY_MAP["default"]
+
+
+def _build_google_feed_item_xml(product, size=None, frontend_base_url: str = "", backend_base_url: str = "") -> str:
+    """
+    Build a single product item XML for Google Merchant feed.
+    If size is provided, generates a variant entry with item_group_id.
+    """
     product_link = urljoin(frontend_base_url, f"product/{product.slug}/")
     product_image = _to_absolute_url(getattr(product, "primary_image_url", ""), backend_base_url)
     description = (product.short_description or product.description or product.name or "").strip()
     availability = "in stock" if product.in_stock else "out of stock"
-    price_text = f"{Decimal(product.price).quantize(TWOPLACES)} GBP"
     brand = (getattr(product.category, "name", "") or "Reve Living").strip()
-    mpn = f"REVE-{product.id}"
-
+    
+    # Price calculation (base + size delta if applicable)
+    price = Decimal(product.price)
+    if size and hasattr(size, "price_delta") and size.price_delta:
+        price += Decimal(size.price_delta)
+    price_text = f"{price.quantize(TWOPLACES)} GBP"
+    
+    # ID generation
+    if size:
+        item_id = f"{product.id}-{size.id}"
+        mpn = f"REVE-{product.id}-{size.id}"
+        title = f"{product.name} - {size.name}"
+    else:
+        item_id = product.id
+        mpn = f"REVE-{product.id}"
+        title = product.name
+    
+    # Collect fabric/material info
+    fabrics = getattr(product, "_prefetched_fabrics", [])
+    materials = []
+    if fabrics:
+        materials = [f.name for f in fabrics if f.name]
+    if not materials and hasattr(product, "description"):
+        # Fallback: try to extract from description
+        materials = ["Engineered Wood & Fabric"]
+    material_text = ", ".join(materials) if materials else ""
+    
+    # Collect color info
+    colors = getattr(product, "_prefetched_colors", [])
+    color_names = [c.name for c in colors if c.name]
+    color_text = color_names[0] if color_names else ""
+    
+    # Google Product Category
+    google_category = _get_google_product_category(brand)
+    
+    # Product Type (based on category/subcategory)
+    subcategory_name = ""
+    if hasattr(product, "subcategory") and product.subcategory:
+        subcategory_name = product.subcategory.name
+    product_type = f"{brand} > {subcategory_name}" if subcategory_name else brand
+    
+    # Check if product has storage (custom label)
+    has_storage = False
+    if hasattr(product, "description") and "storage" in product.description.lower():
+        has_storage = True
+    
     lines = [
         "    <item>",
-        f"      <g:id>{product.id}</g:id>",
-        f"      <g:title>{escape(product.name)}</g:title>",
+        f"      <g:id>{item_id}</g:id>",
+        f"      <g:title>{escape(title)}</g:title>",
         f"      <g:description>{escape(description)}</g:description>",
         f"      <g:link>{escape(product_link)}</g:link>",
         f"      <g:image_link>{escape(product_image)}</g:image_link>",
@@ -235,9 +326,59 @@ def _build_google_feed_item_xml(product, frontend_base_url: str, backend_base_ur
         "      <g:condition>new</g:condition>",
         f"      <g:brand>{escape(brand)}</g:brand>",
         f"      <g:mpn>{escape(mpn)}</g:mpn>",
-        "    </item>",
+        f"      <g:google_product_category>{escape(google_category)}</g:google_product_category>",
+        f"      <g:product_type>{escape(product_type)}</g:product_type>",
     ]
+    
+    # Add size if this is a variant
+    if size:
+        lines.append(f"      <g:item_group_id>{product.id}</g:item_group_id>")
+        lines.append(f"      <g:size>{escape(size.name)}</g:size>")
+    
+    # Add material
+    if material_text:
+        lines.append(f"      <g:material>{escape(material_text)}</g:material>")
+    
+    # Add color
+    if color_text:
+        lines.append(f"      <g:color>{escape(color_text)}</g:color>")
+    
+    # Add standard attributes for furniture
+    lines.append("      <g:age_group>adult</g:age_group>")
+    lines.append("      <g:gender>unisex</g:gender>")
+    
+    # Add custom label for products with storage
+    if has_storage:
+        lines.append("      <g:custom_label_0>Has Storage</g:custom_label_0>")
+    
+    lines.append("    </item>")
     return "\n".join(lines) + "\n"
+
+
+def _build_google_feed_items_xml(product, frontend_base_url: str, backend_base_url: str) -> str:
+    """
+    Generate feed items for a product, creating separate entries for each size variant.
+    """
+    # Prefetch related objects
+    sizes = list(product.sizes.all()) if hasattr(product, "sizes") else []
+    colors = list(product.colors.all()) if hasattr(product, "colors") else []
+    fabrics = list(product.fabrics.all()) if hasattr(product, "fabrics") else []
+    
+    # Store prefetched data on product object for use in _build_google_feed_item_xml
+    product._prefetched_colors = colors
+    product._prefetched_fabrics = fabrics
+    
+    items_xml = ""
+    
+    # If product has sizes, create separate entries for each size
+    if sizes:
+        for size in sizes:
+            items_xml += _build_google_feed_item_xml(product, size=size, frontend_base_url=frontend_base_url, backend_base_url=backend_base_url)
+    else:
+        # No sizes, create single entry
+        items_xml += _build_google_feed_item_xml(product, size=None, frontend_base_url=frontend_base_url, backend_base_url=backend_base_url)
+    
+    return items_xml
 
 
 def google_feed_xml(request):
@@ -260,9 +401,10 @@ def google_feed_xml(request):
     )
     products = (
         Product.objects.filter(is_hidden=False)
-        .select_related("category")
+        .select_related("category", "subcategory")
+        .prefetch_related("sizes", "colors", "fabrics")
         .annotate(primary_image_url=Subquery(primary_image_subquery))
-        .only("id", "name", "slug", "description", "short_description", "price", "in_stock", "category__name")
+        .only("id", "name", "slug", "description", "short_description", "price", "in_stock", "category__name", "subcategory__name")
         .order_by("id")
     )
 
@@ -275,7 +417,7 @@ def google_feed_xml(request):
         yield f"    <link>{escape(channel_link)}</link>\n"
         yield "    <description>Google Merchant Center product feed for Reve Living</description>\n"
         for product in products.iterator(chunk_size=500):
-            yield _build_google_feed_item_xml(product, frontend_base_url, backend_base_url)
+            yield _build_google_feed_items_xml(product, frontend_base_url, backend_base_url)
         yield "  </channel>\n"
         yield "</rss>\n"
 
