@@ -8,12 +8,14 @@ from .models import (
     Product,
     SubCategory,
     ProductImage,
+    ProductMattress,
     ProductSize,
     ProductStyle,
     ProductFilterValue,
     FilterType,
     FilterOption,
     DimensionTemplate,
+    MattressOption,
     ProductDimensionTemplate,
 )
 
@@ -1008,3 +1010,89 @@ class ProductSortOrderSwapTests(TestCase):
 
         self.assertEqual(len(ordered_ids), 24)
         self.assertEqual(ordered_ids[22], moving_product.id)
+
+
+class ProductMattressVisibilityTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin_user = User.objects.create_user(
+            username="admin-mattress-visibility",
+            password="password123",
+            email="admin-mattress@example.com",
+            is_staff=True,
+        )
+        self.category = Category.objects.create(name="Beds", slug="beds-mattress-visibility", sort_order=1)
+        self.product = Product.objects.create(
+            name="Luna Bed",
+            slug="luna-bed-mattress-visibility",
+            category=self.category,
+            price="799.99",
+            short_description="Luxury bed",
+            description="Luxury bed description",
+            in_stock=True,
+            is_hidden=False,
+        )
+        self.hidden_option = MattressOption.objects.create(
+            name="Semi Orthopaedic Mattress",
+            description="Supportive feel",
+            price="0.00",
+        )
+        self.hidden_option.categories.add(self.category)
+        self.visible_option = MattressOption.objects.create(
+            name="Medium Firm Everyday Support",
+            description="Everyday comfort",
+            price="49.99",
+        )
+        self.visible_option.categories.add(self.category)
+
+    def test_public_product_detail_omits_hidden_mattresses(self):
+        ProductMattress.objects.create(
+            product=self.product,
+            name=self.hidden_option.name,
+            is_hidden=True,
+        )
+
+        response = self.client.get(f"/api/products/{self.product.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [item["name"] for item in response.data["mattresses"]],
+            [self.visible_option.name],
+        )
+
+    def test_admin_product_detail_includes_hidden_mattresses_for_editing(self):
+        ProductMattress.objects.create(
+            product=self.product,
+            name=self.hidden_option.name,
+            is_hidden=True,
+        )
+        self.client.force_authenticate(user=self.admin_user)
+
+        response = self.client.get(f"/api/products/{self.product.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        mattresses_by_name = {item["name"]: item for item in response.data["mattresses"]}
+        self.assertIn(self.hidden_option.name, mattresses_by_name)
+        self.assertTrue(mattresses_by_name[self.hidden_option.name]["is_hidden"])
+        self.assertIn(self.visible_option.name, mattresses_by_name)
+        self.assertFalse(mattresses_by_name[self.visible_option.name]["is_hidden"])
+
+    def test_admin_can_save_hidden_mattress_override(self):
+        self.client.force_authenticate(user=self.admin_user)
+
+        response = self.client.patch(
+            f"/api/products/{self.product.id}/",
+            {
+                "mattresses": [
+                    {
+                        "name": self.hidden_option.name,
+                        "is_hidden": True,
+                    }
+                ]
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        saved_override = ProductMattress.objects.get(product=self.product, name=self.hidden_option.name)
+        self.assertTrue(saved_override.is_hidden)

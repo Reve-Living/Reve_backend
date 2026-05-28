@@ -331,6 +331,7 @@ class ProductMattressSerializer(serializers.ModelSerializer):
             "price_top",
             "price_bottom",
             "price_both",
+            "is_hidden",
             "source_product",
             "source_product_name",
             "source_product_slug",
@@ -470,6 +471,8 @@ class ProductSerializer(serializers.ModelSerializer):
         Return mattresses assigned via the mattress manager for the product's
         category/subcategory, then apply any product-specific overrides by name.
         """
+        request = self.context.get("request")
+        is_admin_request = bool(request and request.user and request.user.is_authenticated and request.user.is_staff)
         options = (
             MattressOption.objects.filter(is_active=True)
             .prefetch_related("prices", "categories", "subcategories")
@@ -512,8 +515,26 @@ class ProductSerializer(serializers.ModelSerializer):
         for item in base_items:
             key = str(item.get("name", "")).strip().lower()
             override = override_lookup.get(key)
+            if override and override.is_hidden:
+                if is_admin_request:
+                    merged.append(
+                        {
+                            **item,
+                            "name": override.name or item.get("name"),
+                            "description": override.description or item.get("description"),
+                            "features": item.get("features"),
+                            "image_url": override.image_url or item.get("image_url"),
+                            "price": override.price if override.price is not None else item.get("price"),
+                            "enable_bunk_positions": override.enable_bunk_positions,
+                            "price_top": override.price_top if override.price_top is not None else item.get("price_top"),
+                            "price_bottom": override.price_bottom if override.price_bottom is not None else item.get("price_bottom"),
+                            "price_both": override.price_both if override.price_both is not None else item.get("price_both"),
+                            "is_hidden": True,
+                        }
+                    )
+                continue
             if not override:
-                merged.append(item)
+                merged.append({**item, "is_hidden": False})
                 continue
 
             merged.append(
@@ -528,6 +549,7 @@ class ProductSerializer(serializers.ModelSerializer):
                     "price_top": override.price_top if override.price_top is not None else item.get("price_top"),
                     "price_bottom": override.price_bottom if override.price_bottom is not None else item.get("price_bottom"),
                     "price_both": override.price_both if override.price_both is not None else item.get("price_both"),
+                    "is_hidden": False,
                 }
             )
 

@@ -1133,7 +1133,10 @@ class ProductViewSet(viewsets.ModelViewSet):
         self._handle_dimension_template(product, dimension_template_obj)
 
         self._invalidate_cache()
-        return Response(ProductSerializer(product).data, status=status.HTTP_201_CREATED)
+        return Response(
+            ProductSerializer(product, context=self.get_serializer_context()).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     def update(self, request, *args, **kwargs):
         data = request.data.copy()
@@ -1146,7 +1149,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             serializer.save()
             self._invalidate_cache()
             refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=instance.pk)
-            return Response(ProductSerializer(refreshed).data)
+            return Response(ProductSerializer(refreshed, context=self.get_serializer_context()).data)
 
         images = data.pop("images", None)
         videos = data.pop("videos", None)
@@ -1198,7 +1201,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         self._handle_dimension_template(product, dimension_template_obj)
 
         self._invalidate_cache()
-        return Response(ProductSerializer(product).data)
+        return Response(ProductSerializer(product, context=self.get_serializer_context()).data)
 
     @action(detail=True, methods=["post"], permission_classes=[IsAdminUser], url_path="duplicate")
     def duplicate(self, request, pk=None):
@@ -1209,7 +1212,10 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         self._invalidate_cache()
         refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=duplicated_product.pk)
-        return Response(ProductSerializer(refreshed).data, status=status.HTTP_201_CREATED)
+        return Response(
+            ProductSerializer(refreshed, context=self.get_serializer_context()).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     def _build_duplicate_slug(self, product):
         base = slugify(f"{product.slug or product.name}-copy") or "product-copy"
@@ -1330,6 +1336,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 price_top=mattress.price_top,
                 price_bottom=mattress.price_bottom,
                 price_both=mattress.price_both,
+                is_hidden=mattress.is_hidden,
             )
 
         for filter_value in source.filter_values.all():
@@ -1418,6 +1425,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 price_top=mattress.get("price_top", None),
                 price_bottom=mattress.get("price_bottom", None),
                 price_both=mattress.get("price_both", None),
+                is_hidden=bool(mattress.get("is_hidden", False)),
             )
 
     def _validate_related_data(self, images, videos, colors, sizes, styles, fabrics, mattresses):
@@ -1611,6 +1619,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             image_url = str((mat or {}).get("image_url", "")).strip()
             source_product = mat.get("source_product")
             enable_bunk_positions = bool((mat or {}).get("enable_bunk_positions", False))
+            is_hidden = bool((mat or {}).get("is_hidden", False))
             def _clean_price(field):
                 raw = mat.get(field, None)
                 if raw in (None, "", "null"):
@@ -1641,6 +1650,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                     "price_top": price_top,
                     "price_bottom": price_bottom,
                     "price_both": price_both,
+                    "is_hidden": is_hidden,
                 }
             )
 
