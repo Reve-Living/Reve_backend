@@ -8,6 +8,8 @@ from .models import (
     Product,
     SubCategory,
     ProductImage,
+    ProductColor,
+    ProductFabric,
     ProductMattress,
     ProductSize,
     ProductStyle,
@@ -248,6 +250,32 @@ class ProductDuplicateTests(TestCase):
             sort_order=3,
         )
         ProductImage.objects.create(product=product, url="https://example.com/bed.jpg", alt_text="Main image")
+        ProductColor.objects.create(
+            product=product,
+            name="Tan",
+            hex_code="#D2B48C",
+            image_url="https://example.com/tan.jpg",
+            is_available=False,
+        )
+        ProductFabric.objects.create(
+            product=product,
+            name="Leather",
+            image_url="https://example.com/leather.jpg",
+            colors=[
+                {
+                    "name": "Whiskey",
+                    "hex_code": "#8B5E3C",
+                    "image_url": "https://example.com/whiskey.jpg",
+                    "is_available": False,
+                },
+                {
+                    "name": "Stone",
+                    "hex_code": "#B7B1A1",
+                    "image_url": "https://example.com/stone.jpg",
+                    "is_available": True,
+                },
+            ],
+        )
         size = ProductSize.objects.create(product=product, name="King", description="5ft", price_delta="25.00")
         ProductStyle.objects.create(
             product=product,
@@ -280,6 +308,8 @@ class ProductDuplicateTests(TestCase):
         self.assertEqual(duplicated.rating, 0)
         self.assertEqual(duplicated.review_count, 0)
         self.assertEqual(duplicated.images.count(), 1)
+        self.assertEqual(duplicated.colors.count(), 1)
+        self.assertEqual(duplicated.fabrics.count(), 1)
         self.assertEqual(duplicated.sizes.count(), 1)
         self.assertEqual(duplicated.styles.count(), 1)
         self.assertEqual(duplicated.filter_values.count(), 1)
@@ -287,6 +317,94 @@ class ProductDuplicateTests(TestCase):
         self.assertEqual(duplicated.dimension_template_link.template_id, template.id)
         self.assertNotEqual(duplicated.sizes.first().id, size.id)
         self.assertEqual(duplicated.styles.first().size_id, duplicated.sizes.first().id)
+        self.assertFalse(duplicated.colors.first().is_available)
+        self.assertFalse(duplicated.fabrics.first().colors[0]["is_available"])
+
+
+class ProductVariantAvailabilityTests(TestCase):
+    def test_admin_can_save_availability_for_colors_and_fabric_colors(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin-availability",
+            password="password123",
+            email="admin-availability@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Sofas", slug="sofas-availability", sort_order=1)
+
+        response = client.post(
+            "/api/products/",
+            {
+                "name": "Turin Sofa",
+                "slug": "turin-sofa",
+                "category": category.id,
+                "subcategory": None,
+                "price": "899.99",
+                "original_price": None,
+                "discount_percentage": 0,
+                "description": "Turin sofa description",
+                "short_description": "Turin sofa",
+                "features": [],
+                "dimensions": [],
+                "dimension_images": [],
+                "show_dimensions_table": True,
+                "faqs": [],
+                "delivery_info": "",
+                "returns_guarantee": "",
+                "delivery_title": "",
+                "returns_title": "",
+                "custom_info_sections": [],
+                "delivery_charges": "0.00",
+                "in_stock": True,
+                "is_bestseller": False,
+                "is_new": False,
+                "show_size_icons": True,
+                "sort_order": 1,
+                "rating": "0.0",
+                "review_count": 0,
+                "colors": [
+                    {
+                        "name": "Cream",
+                        "hex_code": "#F5F5DC",
+                        "image_url": "https://example.com/cream.jpg",
+                        "is_available": False,
+                    }
+                ],
+                "fabrics": [
+                    {
+                        "name": "Leather",
+                        "image_url": "https://example.com/leather.jpg",
+                        "is_shared": False,
+                        "colors": [
+                            {
+                                "name": "Whiskey",
+                                "hex_code": "#8B5E3C",
+                                "image_url": "https://example.com/whiskey.jpg",
+                                "is_available": False,
+                            },
+                            {
+                                "name": "Stone",
+                                "hex_code": "#B7B1A1",
+                                "image_url": "https://example.com/stone.jpg",
+                                "is_available": True,
+                            },
+                        ],
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["colors"][0]["is_available"], False)
+        self.assertEqual(response.data["fabrics"][0]["colors"][0]["is_available"], False)
+        self.assertEqual(response.data["fabrics"][0]["colors"][1]["is_available"], True)
+
+        product = Product.objects.get(pk=response.data["id"])
+        self.assertFalse(product.colors.first().is_available)
+        self.assertFalse(product.fabrics.first().colors[0]["is_available"])
 
 
 class ProductImageOrderTests(TestCase):

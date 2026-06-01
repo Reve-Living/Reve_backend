@@ -249,6 +249,7 @@ class ProductColor(models.Model):
     name = models.CharField(max_length=100)
     hex_code = models.CharField(max_length=7, default='#000000')
     image_url = models.URLField(max_length=1000, blank=True)
+    is_available = models.BooleanField(default=True)
     
     class Meta:
         ordering = ['id']
@@ -276,7 +277,7 @@ class ProductFabric(models.Model):
     name = models.CharField(max_length=100)
     image_url = models.URLField(max_length=1000)
     is_shared = models.BooleanField(default=False)
-    colors = models.JSONField(default=list, blank=True)  # list of {name, hex_code, image_url?}
+    colors = models.JSONField(default=list, blank=True)  # list of {name, hex_code, image_url?, is_available?}
 
     class Meta:
         ordering = ["id"]

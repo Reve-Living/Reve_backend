@@ -55,7 +55,7 @@ class ProductVideoInline(admin.TabularInline):
 class ProductColorInline(admin.TabularInline):
     model = ProductColor
     extra = 1
-    fields = ['name', 'hex_code']
+    fields = ['name', 'hex_code', 'is_available']
 
 
 class ProductSizeInline(admin.TabularInline):

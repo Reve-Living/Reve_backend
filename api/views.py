@@ -1293,6 +1293,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 name=color.name,
                 hex_code=color.hex_code,
                 image_url=color.image_url,
+                is_available=color.is_available,
             )
 
         size_map = {}
@@ -1372,6 +1373,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 name=col.get("name", ""),
                 hex_code=col.get("hex_code", "#000000"),
                 image_url=col.get("image_url", ""),
+                is_available=col.get("is_available", True),
             )
         size_objs = []
         for size in sizes:
@@ -1429,6 +1431,19 @@ class ProductViewSet(viewsets.ModelViewSet):
             )
 
     def _validate_related_data(self, images, videos, colors, sizes, styles, fabrics, mattresses):
+        def _coerce_bool(value, default=True):
+            if value is None:
+                return default
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                if normalized in {"true", "1", "yes", "on"}:
+                    return True
+                if normalized in {"false", "0", "no", "off"}:
+                    return False
+            return bool(value)
+
         image_url_max = ProductImage._meta.get_field("url").max_length
         image_color_max = ProductImage._meta.get_field("color_name").max_length
         image_style_max = ProductImage._meta.get_field("style_name").max_length
@@ -1480,7 +1495,14 @@ class ProductViewSet(viewsets.ModelViewSet):
                 raise ValidationError({"colors": [f"Color name too long (max {color_name_max} chars)."]})
             hex_code = str((col or {}).get("hex_code", "#000000")).strip() or "#000000"
             image_url = str((col or {}).get("image_url", "")).strip()
-            cleaned_colors.append({"name": name, "hex_code": hex_code, "image_url": image_url})
+            cleaned_colors.append(
+                {
+                    "name": name,
+                    "hex_code": hex_code,
+                    "image_url": image_url,
+                    "is_available": _coerce_bool((col or {}).get("is_available", True), default=True),
+                }
+            )
 
         cleaned_sizes = []
         for size in sizes:
@@ -1603,6 +1625,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                     "name": cname,
                     "hex_code": str(col.get("hex_code", "#000000")).strip() or "#000000",
                     "image_url": str(col.get("image_url", "")).strip(),
+                    "is_available": _coerce_bool(col.get("is_available", True), default=True),
                 })
             if not name and not image_url:
                 continue
