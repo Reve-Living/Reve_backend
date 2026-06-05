@@ -44,6 +44,9 @@ class OrderEmailTests(TestCase):
             "total_amount": "599.99",
             "delivery_charges": "0.00",
             "payment_method": "paypal",
+            "payment_id": "public-client-cannot-set-this",
+            "status": "paid",
+            "send_confirmation_email": False,
             "special_notes": "Please call before delivery.",
             "reference_images": [
                 "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn4nVQAAAAASUVORK5CYII="
@@ -71,6 +74,8 @@ class OrderEmailTests(TestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(len(mail.outbox), 2)
+        self.assertEqual(response.data["status"], "pending")
+        self.assertEqual(response.data["payment_id"], "")
 
         recipients = sorted(message.to[0] for message in mail.outbox)
         self.assertEqual(recipients, ["customer@example.com", "info@reveliving.co.uk"])
@@ -91,6 +96,50 @@ class OrderEmailTests(TestCase):
         order_item = response.data["items"][0]
         self.assertTrue(order_item["assembly_service_selected"])
         self.assertEqual(order_item["assembly_service_price"], "49.00")
+
+    def test_admin_can_create_manual_order_without_sending_emails(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="manual-orders-admin",
+            password="password123",
+            email="admin@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        payload = {
+            "first_name": "Manual",
+            "last_name": "Order",
+            "email": "manual@example.com",
+            "phone": "+44 1234 567890",
+            "address": "10 Downing Street",
+            "city": "London",
+            "postal_code": "SW1A 2AA",
+            "delivery_charges": "25.00",
+            "payment_method": "bank_transfer",
+            "payment_id": "WHATSAPP-ORDER-001",
+            "send_confirmation_email": False,
+            "special_notes": "Order source: WhatsApp",
+            "items": [
+                {
+                    "quantity": 1,
+                    "price": "499.99",
+                    "size": "King",
+                    "color": "Stone",
+                    "style": "Fabric: Plush Velvet | Headboard: Wingback",
+                    "extras_total": "50.00",
+                }
+            ],
+        }
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = client.post("/api/orders/", payload, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(response.data["payment_id"], "WHATSAPP-ORDER-001")
+        self.assertEqual(response.data["payment_method"], "bank_transfer")
+        self.assertEqual(response.data["total_amount"], "524.99")
 
     def test_admin_can_download_delivery_note_pdf(self):
         client = APIClient()

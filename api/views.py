@@ -99,6 +99,16 @@ def _round_money(value: Decimal) -> Decimal:
     return value.quantize(TWOPLACES, rounding=ROUND_HALF_UP)
 
 
+def _coerce_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
 def _get_live_promotions():
     today = timezone.localdate()
     return (
@@ -1972,6 +1982,19 @@ class OrderViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         data = request.data.copy()
         items = data.pop("items", [])
+        is_admin_request = bool(request.user and request.user.is_authenticated and request.user.is_staff)
+        send_confirmation_email = True
+
+        if is_admin_request:
+            send_confirmation_email = _coerce_bool(data.pop("send_confirmation_email", None), default=True)
+        else:
+            data["status"] = "pending"
+            data["payment_id"] = ""
+            data.pop("send_confirmation_email", None)
+
+        if not items:
+            raise ValidationError({"items": "At least one order item is required"})
+
         delivery_charges = _round_money(_as_decimal(data.get("delivery_charges", 0)))
         subtotal = Decimal("0.00")
         for item in items:
@@ -2014,7 +2037,8 @@ class OrderViewSet(viewsets.ModelViewSet):
                 assembly_service_price=item.get("assembly_service_price", 0),
             )
 
-        transaction.on_commit(lambda: send_order_confirmation_emails(order.id))
+        if send_confirmation_email:
+            transaction.on_commit(lambda: send_order_confirmation_emails(order.id))
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"])

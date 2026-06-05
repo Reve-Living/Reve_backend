@@ -119,8 +119,11 @@ def _normalized_style_parts(style_summary: str) -> list[str]:
 
 def _payment_label(method: str) -> str:
     return {
+        "bank_transfer": "Bank Transfer",
+        "cash": "Cash",
         "cod": "Cash on Delivery",
         "card": "Card",
+        "manual": "Manual",
         "paypal": "PayPal",
     }.get((method or "").lower(), method or "Not provided")
 
