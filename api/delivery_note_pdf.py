@@ -119,8 +119,10 @@ def _normalized_style_parts(style_summary: str) -> list[str]:
 
 def _payment_label(method: str) -> str:
     return {
+        "paid": "Paid",
         "bank_transfer": "Bank Transfer",
         "cash": "Cash",
+        "cash_on_delivery": "Cash on Delivery",
         "cod": "Cash on Delivery",
         "card": "Card",
         "manual": "Manual",

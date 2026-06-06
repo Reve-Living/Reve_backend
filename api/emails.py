@@ -19,8 +19,10 @@ COMPANY_SUPPORT_EMAIL = "support@reveliving.co.uk"
 
 def _payment_label(method: str) -> str:
     return {
+        "paid": "Paid",
         "bank_transfer": "Bank Transfer",
         "cash": "Cash",
+        "cash_on_delivery": "Cash on Delivery",
         "cod": "Cash on Delivery",
         "card": "Card",
         "manual": "Manual",
@@ -358,9 +360,12 @@ def send_order_confirmation_emails(order_id: int) -> None:
         return
 
     order = Order.objects.prefetch_related("items__product").get(pk=order_id)
-    recipients = [(order.email, order.first_name or "Customer", False)]
+    recipients = []
+    customer_email = (order.email or "").strip()
+    if customer_email:
+        recipients.append((customer_email, order.first_name or "Customer", False))
     admin_email = getattr(settings, "ORDER_NOTIFICATION_EMAIL", "") or getattr(settings, "DEFAULT_FROM_EMAIL", "")
-    if admin_email and admin_email.lower() != (order.email or "").lower():
+    if admin_email and admin_email.lower() != customer_email.lower():
         recipients.append((admin_email, "Team", True))
 
     for to_email, label, is_admin in recipients:

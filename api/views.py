@@ -1992,6 +1992,42 @@ class OrderViewSet(viewsets.ModelViewSet):
             data["payment_id"] = ""
             data.pop("send_confirmation_email", None)
 
+        text_fields = (
+            "first_name",
+            "last_name",
+            "email",
+            "phone",
+            "alternative_phone",
+            "address",
+            "city",
+            "postal_code",
+            "floor_number",
+            "payment_method",
+            "payment_id",
+            "special_notes",
+        )
+        for field in text_fields:
+            if field in data:
+                data[field] = str(data.get(field, "") or "").strip()
+
+        if not is_admin_request:
+            required_fields = {
+                "first_name": "First name is required",
+                "last_name": "Last name is required",
+                "email": "Email is required",
+                "phone": "Phone number is required",
+                "address": "Address is required",
+                "city": "City is required",
+                "postal_code": "Postal code is required",
+            }
+            errors = {
+                field: message
+                for field, message in required_fields.items()
+                if not str(data.get(field, "") or "").strip()
+            }
+            if errors:
+                raise ValidationError(errors)
+
         if not items:
             raise ValidationError({"items": "At least one order item is required"})
 

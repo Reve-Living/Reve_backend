@@ -141,6 +141,79 @@ class OrderEmailTests(TestCase):
         self.assertEqual(response.data["payment_method"], "bank_transfer")
         self.assertEqual(response.data["total_amount"], "524.99")
 
+    def test_admin_manual_order_can_skip_customer_details(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="manual-orders-admin-optional",
+            password="password123",
+            email="admin-optional@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        payload = {
+            "first_name": "",
+            "last_name": "",
+            "email": "",
+            "phone": "",
+            "address": "",
+            "city": "",
+            "postal_code": "",
+            "delivery_charges": "0.00",
+            "payment_method": "paid",
+            "payment_id": "Website paid",
+            "send_confirmation_email": True,
+            "special_notes": "Order source: WhatsApp",
+            "items": [
+                {
+                    "quantity": 1,
+                    "price": "299.99",
+                    "style": "Fabric: Plush Velvet",
+                }
+            ],
+        }
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = client.post("/api/orders/", payload, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["email"], "")
+        self.assertEqual(response.data["payment_method"], "paid")
+        self.assertEqual(response.data["payment_id"], "Website paid")
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["info@reveliving.co.uk"])
+
+    def test_public_order_still_requires_customer_details(self):
+        client = APIClient()
+        payload = {
+            "first_name": "",
+            "last_name": "",
+            "email": "",
+            "phone": "",
+            "address": "",
+            "city": "",
+            "postal_code": "",
+            "delivery_charges": "0.00",
+            "payment_method": "paypal",
+            "items": [
+                {
+                    "quantity": 1,
+                    "price": "299.99",
+                }
+            ],
+        }
+
+        response = client.post("/api/orders/", payload, format="json")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("First name is required", str(response.data["first_name"]))
+        self.assertIn("Last name is required", str(response.data["last_name"]))
+        self.assertIn("Email is required", str(response.data["email"]))
+        self.assertIn("Phone number is required", str(response.data["phone"]))
+        self.assertIn("Address is required", str(response.data["address"]))
+        self.assertIn("City is required", str(response.data["city"]))
+        self.assertIn("Postal code is required", str(response.data["postal_code"]))
+
     def test_admin_can_download_delivery_note_pdf(self):
         client = APIClient()
         payload = {
