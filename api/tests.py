@@ -214,6 +214,117 @@ class OrderEmailTests(TestCase):
         self.assertIn("City is required", str(response.data["city"]))
         self.assertIn("Postal code is required", str(response.data["postal_code"]))
 
+    def test_admin_can_update_existing_order_and_replace_items(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="manual-orders-admin-edit",
+            password="password123",
+            email="admin-edit@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        create_payload = {
+            "first_name": "Original",
+            "last_name": "Customer",
+            "email": "original@example.com",
+            "phone": "+44 1000 000000",
+            "address": "10 Original Street",
+            "city": "Leeds",
+            "postal_code": "LS1 1AA",
+            "delivery_charges": "15.00",
+            "payment_method": "paid",
+            "payment_id": "OLD-REF",
+            "send_confirmation_email": False,
+            "special_notes": "Order source: WhatsApp",
+            "items": [
+                {
+                    "quantity": 1,
+                    "price": "199.99",
+                    "size": "Double",
+                }
+            ],
+        }
+
+        create_response = client.post("/api/orders/", create_payload, format="json")
+        self.assertEqual(create_response.status_code, 201)
+
+        update_payload = {
+            "first_name": "Updated",
+            "last_name": "Customer",
+            "email": "",
+            "phone": "+44 2000 000000",
+            "address": "22 Updated Avenue",
+            "city": "Manchester",
+            "postal_code": "M1 1AA",
+            "delivery_charges": "20.00",
+            "payment_method": "cash_on_delivery",
+            "payment_id": "NEW-REF",
+            "special_notes": "Order source: Phone\nCustomer requested evening delivery.",
+            "items": [
+                {
+                    "quantity": 2,
+                    "price": "149.50",
+                    "color": "Stone",
+                },
+                {
+                    "quantity": 1,
+                    "price": "89.99",
+                    "style": "Fabric: Plush Velvet",
+                },
+            ],
+        }
+
+        response = client.put(f"/api/orders/{create_response.data['id']}/", update_payload, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["first_name"], "Updated")
+        self.assertEqual(response.data["payment_method"], "cash_on_delivery")
+        self.assertEqual(response.data["payment_id"], "NEW-REF")
+        self.assertEqual(response.data["delivery_charges"], "20.00")
+        self.assertEqual(response.data["total_amount"], "408.99")
+        self.assertEqual(len(response.data["items"]), 2)
+        self.assertEqual(response.data["items"][0]["quantity"], 2)
+        self.assertEqual(response.data["items"][1]["price"], "89.99")
+
+    def test_admin_can_delete_existing_order(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="manual-orders-admin-delete",
+            password="password123",
+            email="admin-delete@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        create_payload = {
+            "first_name": "Delete",
+            "last_name": "Me",
+            "email": "delete@example.com",
+            "phone": "+44 3000 000000",
+            "address": "3 Delete Road",
+            "city": "Bristol",
+            "postal_code": "BS1 1AA",
+            "delivery_charges": "0.00",
+            "payment_method": "paid",
+            "send_confirmation_email": False,
+            "items": [
+                {
+                    "quantity": 1,
+                    "price": "99.99",
+                }
+            ],
+        }
+
+        create_response = client.post("/api/orders/", create_payload, format="json")
+        self.assertEqual(create_response.status_code, 201)
+
+        delete_response = client.delete(f"/api/orders/{create_response.data['id']}/")
+        fetch_response = client.get(f"/api/orders/{create_response.data['id']}/")
+
+        self.assertEqual(delete_response.status_code, 204)
+        self.assertEqual(fetch_response.status_code, 404)
+
     def test_admin_can_download_delivery_note_pdf(self):
         client = APIClient()
         payload = {

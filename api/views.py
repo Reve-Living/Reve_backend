@@ -1979,19 +1979,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             return super().get_queryset()
         return super().get_queryset().filter(user=self.request.user)
 
-    def create(self, request, *args, **kwargs):
-        data = request.data.copy()
-        items = data.pop("items", [])
-        is_admin_request = bool(request.user and request.user.is_authenticated and request.user.is_staff)
-        send_confirmation_email = True
+    def _is_admin_request(self, request) -> bool:
+        return bool(request.user and request.user.is_authenticated and request.user.is_staff)
 
-        if is_admin_request:
-            send_confirmation_email = _coerce_bool(data.pop("send_confirmation_email", None), default=True)
-        else:
-            data["status"] = "pending"
-            data["payment_id"] = ""
-            data.pop("send_confirmation_email", None)
-
+    def _normalize_order_text_fields(self, data) -> None:
         text_fields = (
             "first_name",
             "last_name",
@@ -2010,40 +2001,69 @@ class OrderViewSet(viewsets.ModelViewSet):
             if field in data:
                 data[field] = str(data.get(field, "") or "").strip()
 
-        if not is_admin_request:
-            required_fields = {
-                "first_name": "First name is required",
-                "last_name": "Last name is required",
-                "email": "Email is required",
-                "phone": "Phone number is required",
-                "address": "Address is required",
-                "city": "City is required",
-                "postal_code": "Postal code is required",
-            }
-            errors = {
-                field: message
-                for field, message in required_fields.items()
-                if not str(data.get(field, "") or "").strip()
-            }
-            if errors:
-                raise ValidationError(errors)
+    def _current_or_incoming_value(self, data, field: str, existing_order=None, default=""):
+        if field in data:
+            return data.get(field, default)
+        if existing_order is not None:
+            return getattr(existing_order, field, default)
+        return default
 
-        if not items:
+    def _validate_public_order_fields(self, data, existing_order=None) -> None:
+        required_fields = {
+            "first_name": "First name is required",
+            "last_name": "Last name is required",
+            "email": "Email is required",
+            "phone": "Phone number is required",
+            "address": "Address is required",
+            "city": "City is required",
+            "postal_code": "Postal code is required",
+        }
+        errors = {
+            field: message
+            for field, message in required_fields.items()
+            if not str(self._current_or_incoming_value(data, field, existing_order, "") or "").strip()
+        }
+        if errors:
+            raise ValidationError(errors)
+
+    def _existing_items_payload(self, order):
+        return [
+            {
+                "product_id": item.product_id,
+                "quantity": item.quantity,
+                "price": item.price,
+            }
+            for item in order.items.all()
+        ]
+
+    def _prepare_order_data(self, data, items, *, existing_order=None, is_admin_request=False):
+        self._normalize_order_text_fields(data)
+
+        if not is_admin_request:
+            self._validate_public_order_fields(data, existing_order)
+
+        effective_items = items if items is not None else (self._existing_items_payload(existing_order) if existing_order else [])
+        if not effective_items:
             raise ValidationError({"items": "At least one order item is required"})
 
-        delivery_charges = _round_money(_as_decimal(data.get("delivery_charges", 0)))
+        delivery_charges = _round_money(
+            _as_decimal(self._current_or_incoming_value(data, "delivery_charges", existing_order, 0))
+        )
         subtotal = Decimal("0.00")
-        for item in items:
+        for item in effective_items:
             quantity = max(int(item.get("quantity", 1) or 1), 1)
             subtotal += _round_money(_as_decimal(item.get("price")) * quantity)
 
-        promo_code = str(data.get("promo_code", "") or "").strip()
-        promo_name = ""
-        promo_discount_amount = Decimal("0.00")
+        promo_code = str(self._current_or_incoming_value(data, "promo_code", existing_order, "") or "").strip()
+        promo_name = str(getattr(existing_order, "promo_name", "") or "")
+        promo_discount_amount = _round_money(_as_decimal(getattr(existing_order, "promo_discount_amount", 0)))
         if promo_code:
-            promo_result = _build_promotion_result(code=promo_code, items_payload=items)
+            promo_result = _build_promotion_result(code=promo_code, items_payload=effective_items)
             promo_name = promo_result["promotion"].name
             promo_discount_amount = promo_result["discount_amount"]
+        else:
+            promo_name = ""
+            promo_discount_amount = Decimal("0.00")
 
         total_amount = _round_money(subtotal + delivery_charges - promo_discount_amount)
         data["total_amount"] = str(total_amount)
@@ -2051,10 +2071,10 @@ class OrderViewSet(viewsets.ModelViewSet):
         data["promo_code"] = promo_code.upper()
         data["promo_name"] = promo_name
         data["promo_discount_amount"] = str(promo_discount_amount)
-        serializer = self.get_serializer(data=data)
-        serializer.is_valid(raise_exception=True)
-        order = serializer.save(user=request.user if request.user.is_authenticated else None)
+        return effective_items
 
+    def _replace_order_items(self, order, items) -> None:
+        order.items.all().delete()
         for item in items:
             OrderItem.objects.create(
                 order=order,
@@ -2073,9 +2093,60 @@ class OrderViewSet(viewsets.ModelViewSet):
                 assembly_service_price=item.get("assembly_service_price", 0),
             )
 
+    def create(self, request, *args, **kwargs):
+        data = request.data.copy()
+        items = data.pop("items", [])
+        is_admin_request = self._is_admin_request(request)
+        send_confirmation_email = True
+
+        if is_admin_request:
+            send_confirmation_email = _coerce_bool(data.pop("send_confirmation_email", None), default=True)
+        else:
+            data["status"] = "pending"
+            data["payment_id"] = ""
+            data.pop("send_confirmation_email", None)
+
+        items = self._prepare_order_data(data, items, is_admin_request=is_admin_request)
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        order = serializer.save(user=request.user if request.user.is_authenticated else None)
+
+        self._replace_order_items(order, items)
+
         if send_confirmation_email:
             transaction.on_commit(lambda: send_order_confirmation_emails(order.id))
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        order = self.get_object()
+        data = request.data.copy()
+        items = data.pop("items", None)
+        is_admin_request = self._is_admin_request(request)
+
+        if not is_admin_request:
+            data.pop("payment_id", None)
+            data.pop("send_confirmation_email", None)
+
+        prepared_items = self._prepare_order_data(
+            data,
+            items,
+            existing_order=order,
+            is_admin_request=is_admin_request,
+        )
+        serializer = self.get_serializer(order, data=data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+
+        with transaction.atomic():
+            order = serializer.save()
+            if items is not None:
+                self._replace_order_items(order, prepared_items)
+
+        return Response(OrderSerializer(order).data)
+
+    def partial_update(self, request, *args, **kwargs):
+        kwargs["partial"] = True
+        return self.update(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"])
     def mark_paid(self, request, pk=None):
