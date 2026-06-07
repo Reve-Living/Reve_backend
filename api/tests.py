@@ -477,6 +477,7 @@ class ProductDuplicateTests(TestCase):
             price="499.99",
             short_description="Original short description",
             description="Original long description",
+            sofa_feature_highlights=["USB", "Cup Holders"],
             in_stock=True,
             is_hidden=False,
             delivery_info="Delivery included",
@@ -548,6 +549,7 @@ class ProductDuplicateTests(TestCase):
         self.assertEqual(duplicated.filter_values.count(), 1)
         self.assertTrue(hasattr(duplicated, "dimension_template_link"))
         self.assertEqual(duplicated.dimension_template_link.template_id, template.id)
+        self.assertEqual(duplicated.sofa_feature_highlights, ["USB", "Cup Holders"])
         self.assertNotEqual(duplicated.sizes.first().id, size.id)
         self.assertEqual(duplicated.styles.first().size_id, duplicated.sizes.first().id)
         self.assertFalse(duplicated.colors.first().is_available)
@@ -580,6 +582,7 @@ class ProductVariantAvailabilityTests(TestCase):
                 "description": "Turin sofa description",
                 "short_description": "Turin sofa",
                 "features": [],
+                "sofa_feature_highlights": ["USB Charging", "Manual Recliner"],
                 "dimensions": [],
                 "dimension_images": [],
                 "show_dimensions_table": True,
@@ -631,11 +634,13 @@ class ProductVariantAvailabilityTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["sofa_feature_highlights"], ["USB Charging", "Manual Recliner"])
         self.assertEqual(response.data["colors"][0]["is_available"], False)
         self.assertEqual(response.data["fabrics"][0]["colors"][0]["is_available"], False)
         self.assertEqual(response.data["fabrics"][0]["colors"][1]["is_available"], True)
 
         product = Product.objects.get(pk=response.data["id"])
+        self.assertEqual(product.sofa_feature_highlights, ["USB Charging", "Manual Recliner"])
         self.assertFalse(product.colors.first().is_available)
         self.assertFalse(product.fabrics.first().colors[0]["is_available"])
 

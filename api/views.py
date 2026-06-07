@@ -1259,6 +1259,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             description=source.description,
             short_description=source.short_description,
             features=source.features,
+            sofa_feature_highlights=source.sofa_feature_highlights,
             dimensions=source.dimensions,
             faqs=source.faqs,
             delivery_info=source.delivery_info,

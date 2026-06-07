@@ -183,6 +183,7 @@ class Product(models.Model):
     description = models.TextField()
     short_description = models.TextField(blank=True)
     features = models.JSONField(default=list, blank=True)
+    sofa_feature_highlights = models.JSONField(default=list, blank=True)
     dimensions = models.JSONField(default=list, blank=True)
     faqs = models.JSONField(default=list, blank=True)
     delivery_info = models.TextField(blank=True)

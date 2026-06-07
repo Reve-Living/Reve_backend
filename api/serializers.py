@@ -409,6 +409,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "description",
             "short_description",
             "features",
+            "sofa_feature_highlights",
             "dimensions",
             "faqs",
             "delivery_info",
@@ -761,6 +762,7 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             "description",
             "short_description",
             "features",
+            "sofa_feature_highlights",
             "dimensions",
             "dimension_paragraph",
             "dimension_note",
@@ -832,6 +834,18 @@ class ProductWriteSerializer(serializers.ModelSerializer):
                 short_description = f"{short_description[:217].rstrip()}..."
 
         attrs["short_description"] = short_description or ""
+
+        raw_sofa_feature_highlights = attrs.get(
+            "sofa_feature_highlights",
+            getattr(self.instance, "sofa_feature_highlights", []),
+        )
+        cleaned_sofa_feature_highlights = []
+        if isinstance(raw_sofa_feature_highlights, list):
+            for item in raw_sofa_feature_highlights:
+                label = str(item or "").strip()
+                if label:
+                    cleaned_sofa_feature_highlights.append(label)
+        attrs["sofa_feature_highlights"] = cleaned_sofa_feature_highlights
 
         raw_dimensions = attrs.get("dimensions", getattr(self.instance, "dimensions", []))
         cleaned_dimensions = []
