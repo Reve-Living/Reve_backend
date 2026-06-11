@@ -421,12 +421,20 @@ class Order(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     payment_method = models.CharField(max_length=50)
     payment_id = models.CharField(max_length=255, blank=True)
+    payment_metadata = models.JSONField(default=dict, blank=True)
     promo_code = models.CharField(max_length=80, blank=True, default="")
     promo_name = models.CharField(max_length=255, blank=True, default="")
     promo_discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     special_notes = models.TextField(blank=True, default="")
     reference_images = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    refund_status = models.CharField(max_length=20, blank=True, default="")
+    refund_provider = models.CharField(max_length=20, blank=True, default="")
+    refund_id = models.CharField(max_length=255, blank=True, default="")
+    refund_error = models.TextField(blank=True, default="")
+    refund_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    refunded_at = models.DateTimeField(null=True, blank=True)
 
 
 class OrderItem(models.Model):

@@ -1,8 +1,6 @@
 import uuid
 import os
 import stripe
-import requests
-from requests.adapters import HTTPAdapter, Retry
 import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import urlencode, urljoin
@@ -24,7 +22,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import NotFound, ValidationError
 from django.utils import timezone
 
 from .models import (
@@ -79,8 +77,19 @@ from .serializers import (
     MattressOptionSerializer,
     ProductMattressSerializer,
 )
-from .emails import send_order_confirmation_emails
+from .emails import send_order_cancellation_emails, send_order_confirmation_emails
 from .delivery_note_pdf import build_delivery_note_pdf
+from .payments import (
+    PaymentProviderError,
+    extract_local_order_id_from_paypal,
+    extract_paypal_capture_id,
+    get_stripe_payment_details,
+    paypal_access_token,
+    paypal_request,
+    refund_paypal_payment,
+    refund_stripe_payment,
+    resolve_paypal_payment_details,
+)
 
 
 TWOPLACES = Decimal("0.01")
@@ -1965,12 +1974,18 @@ class PromotionViewSet(viewsets.ModelViewSet):
 
 
 class OrderViewSet(viewsets.ModelViewSet):
-    queryset = Order.objects.all().order_by("-created_at")
+    queryset = Order.objects.all().prefetch_related("items__product").order_by("-created_at")
     serializer_class = OrderSerializer
 
     def get_permissions(self):
-        if self.action == "create":
+        if self.action in ("create", "lookup"):
             return [AllowAny()]
+        if self.action in ("mark_paid", "mark_cancelled"):
+            if self.request.user.is_staff:
+                return [IsAdminUser()]
+            return [AllowAny()]
+        if self.action == "delivery_note_pdf":
+            return [IsAdminUser()]
         if self.request.user.is_staff:
             return [IsAdminUser()]
         return [IsAuthenticated()]
@@ -1982,6 +1997,241 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     def _is_admin_request(self, request) -> bool:
         return bool(request.user and request.user.is_authenticated and request.user.is_staff)
+
+    def _get_order_by_id(self, order_id):
+        try:
+            return Order.objects.prefetch_related("items__product").get(pk=order_id)
+        except Order.DoesNotExist as exc:
+            raise NotFound("Order not found") from exc
+
+    def _get_request_email(self, request) -> str:
+        return str(request.data.get("email") or request.query_params.get("email") or "").strip()
+
+    def _can_access_order(self, request, order, *, allow_email_match: bool = False) -> bool:
+        if self._is_admin_request(request):
+            return True
+        if request.user and request.user.is_authenticated and order.user_id and request.user.id == order.user_id:
+            return True
+        if allow_email_match:
+            provided_email = self._get_request_email(request)
+            order_email = str(order.email or "").strip()
+            if provided_email and order_email and provided_email.casefold() == order_email.casefold():
+                return True
+        return False
+
+    def _require_order_access(self, request, order, *, allow_email_match: bool = False, error_message: str):
+        if self._can_access_order(request, order, allow_email_match=allow_email_match):
+            return
+        raise ValidationError({"email": error_message})
+
+    def _sync_cancelled_timestamp(self, order) -> None:
+        update_fields = []
+        if order.status == "cancelled" and not order.cancelled_at:
+            order.cancelled_at = timezone.now()
+            update_fields.append("cancelled_at")
+        elif order.status != "cancelled" and order.cancelled_at is not None:
+            order.cancelled_at = None
+            update_fields.append("cancelled_at")
+
+        if update_fields:
+            order.save(update_fields=update_fields)
+
+    def _normalized_payment_method(self, value: str | None) -> str:
+        return str(value or "").strip().lower()
+
+    def _merge_payment_metadata(self, order, incoming_metadata=None):
+        merged = dict(order.payment_metadata or {})
+        if isinstance(incoming_metadata, dict):
+            merged.update(incoming_metadata)
+        return merged
+
+    def _apply_payment_details(
+        self,
+        order,
+        *,
+        payment_method: str | None = None,
+        payment_id: str | None = None,
+        payment_metadata: dict | None = None,
+        status_value: str | None = None,
+    ) -> None:
+        update_fields = []
+
+        if payment_method is not None:
+            normalized_method = str(payment_method or "").strip()
+            if order.payment_method != normalized_method:
+                order.payment_method = normalized_method
+                update_fields.append("payment_method")
+
+        if payment_id is not None:
+            normalized_payment_id = str(payment_id or "").strip()
+            if order.payment_id != normalized_payment_id:
+                order.payment_id = normalized_payment_id
+                update_fields.append("payment_id")
+
+        if payment_metadata is not None and order.payment_metadata != payment_metadata:
+            order.payment_metadata = payment_metadata
+            update_fields.append("payment_metadata")
+
+        if status_value is not None and order.status != status_value:
+            order.status = status_value
+            update_fields.append("status")
+
+        if update_fields:
+            order.save(update_fields=list(dict.fromkeys(update_fields)))
+
+    def _set_refund_state(
+        self,
+        order,
+        *,
+        refund_status: str,
+        refund_provider: str = "",
+        refund_id: str = "",
+        refund_error: str = "",
+        refund_amount=None,
+        refunded_at=None,
+        payment_metadata: dict | None = None,
+    ) -> None:
+        order.refund_status = refund_status
+        order.refund_provider = refund_provider
+        order.refund_id = refund_id
+        order.refund_error = refund_error
+        order.refund_amount = refund_amount if refund_amount is not None else Decimal("0.00")
+        order.refunded_at = refunded_at
+        if payment_metadata is not None:
+            order.payment_metadata = payment_metadata
+        order.save(
+            update_fields=[
+                "refund_status",
+                "refund_provider",
+                "refund_id",
+                "refund_error",
+                "refund_amount",
+                "refunded_at",
+                "payment_metadata",
+            ]
+        )
+
+    def _resolve_paid_payment_details(self, order, payment_method: str, payment_id: str, payment_metadata: dict):
+        normalized_method = self._normalized_payment_method(payment_method)
+        normalized_payment_id = str(payment_id or "").strip()
+
+        if normalized_method == "card":
+            resolved_metadata = get_stripe_payment_details(
+                payment_id=normalized_payment_id,
+                payment_metadata=payment_metadata,
+            )
+            payment_status = self._normalized_payment_method(resolved_metadata.get("stripe_payment_status"))
+            if payment_status and payment_status != "paid":
+                raise PaymentProviderError("Stripe checkout session is not paid yet")
+            resolved_payment_id = (
+                str(resolved_metadata.get("stripe_checkout_session_id") or "").strip()
+                or normalized_payment_id
+            )
+            return resolved_payment_id, resolved_metadata
+
+        if normalized_method == "paypal":
+            resolved_metadata = resolve_paypal_payment_details(
+                payment_id=normalized_payment_id,
+                payment_metadata=payment_metadata,
+            )
+            resolved_payment_id = (
+                str(resolved_metadata.get("paypal_capture_id") or "").strip()
+                or normalized_payment_id
+            )
+            return resolved_payment_id, resolved_metadata
+
+        return normalized_payment_id, payment_metadata
+
+    def _process_refund_for_cancellation(self, order) -> None:
+        normalized_method = self._normalized_payment_method(order.payment_method)
+        payment_metadata = dict(order.payment_metadata or {})
+
+        if normalized_method == "card":
+            try:
+                refund_result = refund_stripe_payment(
+                    order_id=order.id,
+                    payment_id=order.payment_id,
+                    payment_metadata=payment_metadata,
+                )
+            except PaymentProviderError as exc:
+                self._set_refund_state(
+                    order,
+                    refund_status="failed",
+                    refund_provider="stripe",
+                    refund_error=str(exc),
+                    refund_amount=Decimal("0.00"),
+                    refunded_at=None,
+                    payment_metadata=payment_metadata,
+                )
+                return
+
+            refund_status = refund_result.get("status") or "failed"
+            refund_provider = refund_result.get("provider") or "stripe"
+            resolved_payment_metadata = refund_result.get("payment_metadata") or payment_metadata
+            if refund_status == "succeeded":
+                self._set_refund_state(
+                    order,
+                    refund_status="succeeded",
+                    refund_provider=refund_provider,
+                    refund_id=str(refund_result.get("refund_id") or "").strip(),
+                    refund_error="",
+                    refund_amount=order.total_amount,
+                    refunded_at=timezone.now(),
+                    payment_metadata=resolved_payment_metadata,
+                )
+                return
+
+            self._set_refund_state(
+                order,
+                refund_status="not_required",
+                refund_provider=refund_provider,
+                refund_error="",
+                refund_amount=Decimal("0.00"),
+                refunded_at=None,
+                payment_metadata=resolved_payment_metadata,
+            )
+            return
+
+        if normalized_method == "paypal":
+            try:
+                refund_result = refund_paypal_payment(
+                    order_id=order.id,
+                    payment_id=order.payment_id,
+                    payment_metadata=payment_metadata,
+                )
+            except PaymentProviderError as exc:
+                self._set_refund_state(
+                    order,
+                    refund_status="failed",
+                    refund_provider="paypal",
+                    refund_error=str(exc),
+                    refund_amount=Decimal("0.00"),
+                    refunded_at=None,
+                    payment_metadata=payment_metadata,
+                )
+                return
+
+            self._set_refund_state(
+                order,
+                refund_status="succeeded",
+                refund_provider=str(refund_result.get("provider") or "paypal"),
+                refund_id=str(refund_result.get("refund_id") or "").strip(),
+                refund_error="",
+                refund_amount=order.total_amount,
+                refunded_at=timezone.now(),
+                payment_metadata=refund_result.get("payment_metadata") or payment_metadata,
+            )
+            return
+
+        self._set_refund_state(
+            order,
+            refund_status="not_required",
+            refund_provider="",
+            refund_error="",
+            refund_amount=Decimal("0.00"),
+            refunded_at=None,
+            payment_metadata=payment_metadata,
+        )
 
     def _normalize_order_text_fields(self, data) -> None:
         text_fields = (
@@ -2001,6 +2251,23 @@ class OrderViewSet(viewsets.ModelViewSet):
         for field in text_fields:
             if field in data:
                 data[field] = str(data.get(field, "") or "").strip()
+
+    def _strip_public_managed_fields(self, data) -> None:
+        for field in (
+            "status",
+            "payment_id",
+            "payment_metadata",
+            "refund_status",
+            "refund_provider",
+            "refund_id",
+            "refund_error",
+            "refund_amount",
+            "refunded_at",
+            "cancelled_at",
+            "send_confirmation_email",
+            "user",
+        ):
+            data.pop(field, None)
 
     def _current_or_incoming_value(self, data, field: str, existing_order=None, default=""):
         if field in data:
@@ -2103,9 +2370,9 @@ class OrderViewSet(viewsets.ModelViewSet):
         if is_admin_request:
             send_confirmation_email = _coerce_bool(data.pop("send_confirmation_email", None), default=True)
         else:
+            self._strip_public_managed_fields(data)
             data["status"] = "pending"
             data["payment_id"] = ""
-            data.pop("send_confirmation_email", None)
 
         items = self._prepare_order_data(data, items, is_admin_request=is_admin_request)
         serializer = self.get_serializer(data=data)
@@ -2113,6 +2380,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         order = serializer.save(user=request.user if request.user.is_authenticated else None)
 
         self._replace_order_items(order, items)
+        self._sync_cancelled_timestamp(order)
 
         if send_confirmation_email:
             transaction.on_commit(lambda: send_order_confirmation_emails(order.id))
@@ -2126,8 +2394,8 @@ class OrderViewSet(viewsets.ModelViewSet):
         is_admin_request = self._is_admin_request(request)
 
         if not is_admin_request:
-            data.pop("payment_id", None)
-            data.pop("send_confirmation_email", None)
+            self._strip_public_managed_fields(data)
+            data.pop("payment_method", None)
 
         prepared_items = self._prepare_order_data(
             data,
@@ -2142,6 +2410,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             order = serializer.save()
             if items is not None:
                 self._replace_order_items(order, prepared_items)
+            self._sync_cancelled_timestamp(order)
 
         return Response(OrderSerializer(order).data)
 
@@ -2149,39 +2418,99 @@ class OrderViewSet(viewsets.ModelViewSet):
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
 
+    @action(detail=False, methods=["post"])
+    def lookup(self, request):
+        order_id = request.data.get("order_id")
+        if not order_id:
+            raise ValidationError({"order_id": "Order ID is required"})
+
+        order = self._get_order_by_id(order_id)
+        self._require_order_access(
+            request,
+            order,
+            allow_email_match=True,
+            error_message="Order details did not match our records",
+        )
+        return Response(OrderSerializer(order).data)
+
     @action(detail=True, methods=["post"])
     def mark_paid(self, request, pk=None):
-        order = self.get_object()
-        payment_method = request.data.get("payment_method")
-        payment_id = request.data.get("payment_id")
-        if payment_method:
-            order.payment_method = payment_method
-        if payment_id:
-            order.payment_id = payment_id
-        order.status = "paid"
-        order.save()
-        return Response({"status": "order marked as paid", "payment_method": order.payment_method, "payment_id": order.payment_id})
+        order = self._get_order_by_id(pk)
+        self._require_order_access(
+            request,
+            order,
+            allow_email_match=True,
+            error_message="We couldn't verify this payment update request",
+        )
+        payment_method = request.data.get("payment_method") or order.payment_method
+        payment_id = request.data.get("payment_id") or order.payment_id
+        payment_metadata = self._merge_payment_metadata(order, request.data.get("payment_metadata"))
+
+        try:
+            resolved_payment_id, payment_metadata = self._resolve_paid_payment_details(
+                order,
+                payment_method=str(payment_method or "").strip(),
+                payment_id=str(payment_id or "").strip(),
+                payment_metadata=payment_metadata,
+            )
+        except PaymentProviderError as exc:
+            raise ValidationError({"payment_id": str(exc)}) from exc
+
+        self._apply_payment_details(
+            order,
+            payment_method=str(payment_method or "").strip(),
+            payment_id=resolved_payment_id,
+            payment_metadata=payment_metadata,
+            status_value="paid",
+        )
+        self._sync_cancelled_timestamp(order)
+        return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"])
     def mark_shipped(self, request, pk=None):
         order = self.get_object()
         order.status = "shipped"
-        order.save()
-        return Response({"status": "order marked as shipped"})
+        order.save(update_fields=["status"])
+        self._sync_cancelled_timestamp(order)
+        return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"])
     def mark_delivered(self, request, pk=None):
         order = self.get_object()
         order.status = "delivered"
-        order.save()
-        return Response({"status": "order marked as delivered"})
+        order.save(update_fields=["status"])
+        self._sync_cancelled_timestamp(order)
+        return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"])
     def mark_cancelled(self, request, pk=None):
-        order = self.get_object()
-        order.status = "cancelled"
-        order.save()
-        return Response({"status": "order marked as cancelled"})
+        order = self._get_order_by_id(pk)
+        is_admin_request = self._is_admin_request(request)
+        self._require_order_access(
+            request,
+            order,
+            allow_email_match=True,
+            error_message="We couldn't verify this cancellation request",
+        )
+
+        if not is_admin_request and order.status in ("shipped", "delivered"):
+            raise ValidationError({"status": "This order can no longer be cancelled online"})
+
+        if order.status != "cancelled":
+            with transaction.atomic():
+                order.status = "cancelled"
+                order.cancelled_at = timezone.now()
+                order.save(update_fields=["status", "cancelled_at"])
+                self._process_refund_for_cancellation(order)
+                transaction.on_commit(lambda: send_order_cancellation_emails(order.id))
+        else:
+            if not order.cancelled_at:
+                order.cancelled_at = timezone.now()
+                order.save(update_fields=["cancelled_at"])
+            if order.refund_status != "succeeded":
+                self._process_refund_for_cancellation(order)
+
+        return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["get"], permission_classes=[IsAdminUser])
     def delivery_note_pdf(self, request, pk=None):
@@ -2307,48 +2636,8 @@ class UploadViewSet(viewsets.ViewSet):
 
 
 class PaymentViewSet(viewsets.ViewSet):
-    def _paypal_session(self):
-        # Shared session with retry/backoff to reduce transient PayPal failures
-        if hasattr(self, "_paypal_cached_session"):
-            return self._paypal_cached_session
-
-        retries = Retry(
-            total=3,
-            backoff_factor=0.5,
-            status_forcelist=[500, 502, 503, 504],
-            allowed_methods=["GET", "POST"],
-        )
-        adapter = HTTPAdapter(max_retries=retries)
-        session = requests.Session()
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-        self._paypal_cached_session = session
-        return session
-
     def _paypal_request(self, method: str, path: str, **kwargs):
-        # Apply sane defaults and user-friendly error messages
-        timeout = kwargs.pop(
-            "timeout",
-            (
-                getattr(settings, "PAYPAL_CONNECT_TIMEOUT", 5),
-                getattr(settings, "PAYPAL_TIMEOUT", 15),
-            ),
-        )
-        url = f"{settings.PAYPAL_BASE_URL}{path}"
-        try:
-            resp = self._paypal_session().request(method, url, timeout=timeout, **kwargs)
-        except requests.Timeout:
-            return None, {"error": "PayPal timed out. Please try again in a moment."}
-        except requests.RequestException as exc:
-            return None, {"error": f"PayPal request failed: {exc}"}
-
-        if resp.status_code >= 400:
-            return None, {
-                "error": "PayPal returned an error",
-                "status": resp.status_code,
-                "body": resp.text,
-            }
-        return resp, None
+        return paypal_request(method, path, **kwargs)
 
     @action(detail=False, methods=["post"])
     def create_stripe_session(self, request):
@@ -2394,16 +2683,36 @@ class PaymentViewSet(viewsets.ViewSet):
         if order_id:
             metadata["order_id"] = str(order_id)
 
+        success_url = request.data.get("success_url")
+        if success_url and "{CHECKOUT_SESSION_ID}" not in success_url:
+            separator = "&" if "?" in success_url else "?"
+            success_url = f"{success_url}{separator}session_id={{CHECKOUT_SESSION_ID}}"
+
         try:
+            session_kwargs = {
+                "payment_method_types": ["card"],
+                "line_items": line_items,
+                "mode": "payment",
+                "success_url": success_url,
+                "cancel_url": request.data.get("cancel_url"),
+                "client_reference_id": str(order_id) if order_id else None,
+            }
+            if metadata:
+                session_kwargs["metadata"] = metadata
+                session_kwargs["payment_intent_data"] = {"metadata": metadata}
+
             checkout_session = stripe.checkout.Session.create(
-                payment_method_types=["card"],
-                line_items=line_items,
-                mode="payment",
-                success_url=request.data.get("success_url"),
-                cancel_url=request.data.get("cancel_url"),
-                client_reference_id=str(order_id) if order_id else None,
-                metadata=metadata or None,
+                **session_kwargs,
             )
+            if order_id:
+                order = Order.objects.filter(pk=order_id).first()
+                if order:
+                    payment_metadata = dict(order.payment_metadata or {})
+                    payment_metadata["stripe_checkout_session_id"] = checkout_session.id
+                    order.payment_id = checkout_session.id
+                    order.payment_method = "card"
+                    order.payment_metadata = payment_metadata
+                    order.save(update_fields=["payment_id", "payment_method", "payment_metadata"])
             return Response({"id": checkout_session.id, "url": checkout_session.url})
         except Exception as exc:  # pragma: no cover - external service
             # Surface the error to the client so they see why checkout failed
@@ -2453,7 +2762,18 @@ class PaymentViewSet(viewsets.ViewSet):
         )
         if error:
             return Response(error, status=status.HTTP_400_BAD_REQUEST)
-        return Response(response.json())
+        payload = response.json()
+        paypal_order_id = str(payload.get("id") or "").strip()
+        if order_id and paypal_order_id:
+            order = Order.objects.filter(pk=order_id).first()
+            if order:
+                payment_metadata = dict(order.payment_metadata or {})
+                payment_metadata["paypal_order_id"] = paypal_order_id
+                order.payment_id = paypal_order_id
+                order.payment_method = "paypal"
+                order.payment_metadata = payment_metadata
+                order.save(update_fields=["payment_id", "payment_method", "payment_metadata"])
+        return Response(payload)
 
     @action(detail=False, methods=["post"])
     def capture_paypal_order(self, request):
@@ -2468,22 +2788,25 @@ class PaymentViewSet(viewsets.ViewSet):
         )
         if error:
             return Response(error, status=status.HTTP_400_BAD_REQUEST)
-        return Response(response.json())
+        payload = response.json()
+        capture_id = extract_paypal_capture_id(payload)
+        local_order_id = extract_local_order_id_from_paypal(payload)
+        if local_order_id:
+            order = Order.objects.filter(pk=local_order_id).first()
+            if order:
+                payment_metadata = dict(order.payment_metadata or {})
+                payment_metadata["paypal_order_id"] = str(order_id or "").strip()
+                if capture_id:
+                    payment_metadata["paypal_capture_id"] = capture_id
+                order.payment_method = "paypal"
+                order.payment_id = capture_id or str(order_id or "").strip()
+                order.payment_metadata = payment_metadata
+                order.status = "paid"
+                order.save(update_fields=["payment_method", "payment_id", "payment_metadata", "status"])
+        return Response(payload)
 
     def _paypal_access_token(self):
-        if not settings.PAYPAL_CLIENT_ID or not settings.PAYPAL_CLIENT_SECRET:
-            return None, {"error": "Missing PayPal credentials", "hint": "Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET"}
-
-        response, error = self._paypal_request(
-            "POST",
-            "/v1/oauth2/token",
-            auth=(settings.PAYPAL_CLIENT_ID, settings.PAYPAL_CLIENT_SECRET),
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            data={"grant_type": "client_credentials"},
-        )
-        if error:
-            return None, error
-        return response.json().get("access_token"), None
+        return paypal_access_token()
 
 
 class FilterTypeViewSet(viewsets.ModelViewSet):
