@@ -2540,11 +2540,35 @@ class OrderViewSet(viewsets.ModelViewSet):
 class ReviewViewSet(viewsets.ModelViewSet):
     queryset = Review.objects.all()
     serializer_class = ReviewSerializer
+    REVIEW_MEDIA_MAX_SIZE = int(getattr(settings, "REVIEW_MEDIA_MAX_UPLOAD_SIZE", 50 * 1024 * 1024))
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve", "create"):
+        if self.action in ("list", "retrieve", "create", "upload_media"):
             return [AllowAny()]
         return [IsAdminUser()]
+
+    def _build_review_media_response(self, request, file_obj):
+        content_type = str(getattr(file_obj, "content_type", "") or "").lower()
+        if not (content_type.startswith("image/") or content_type.startswith("video/")):
+            raise ValidationError({"file": "Only image and video uploads are allowed"})
+        if getattr(file_obj, "size", 0) > self.REVIEW_MEDIA_MAX_SIZE:
+            raise ValidationError({"file": "Review media must be 50MB or smaller"})
+
+        media_type = "video" if content_type.startswith("video/") else "image"
+        base_name, ext = os.path.splitext(file_obj.name or "")
+        if not ext:
+            ext = ".mp4" if media_type == "video" else ".jpg"
+        safe_base = slugify(base_name) or "review-media"
+        file_name = f"review-media/{uuid.uuid4().hex}-{safe_base}{ext.lower()}"
+        saved_path = default_storage.save(file_name, file_obj)
+        stored_url = default_storage.url(saved_path)
+        absolute_url = stored_url if str(stored_url).startswith(("http://", "https://")) else request.build_absolute_uri(stored_url)
+        return {
+            "url": absolute_url,
+            "type": media_type,
+            "name": file_obj.name or "",
+            "mime_type": content_type,
+        }
 
     def get_queryset(self):
         queryset = Review.objects.select_related("product", "created_by").all().order_by("-created_at")
@@ -2586,6 +2610,13 @@ class ReviewViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["post"], permission_classes=[AllowAny])
+    def upload_media(self, request):
+        file_obj = request.FILES.get("file")
+        if not file_obj:
+            raise ValidationError({"file": "A media file is required"})
+        return Response(self._build_review_media_response(request, file_obj), status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], permission_classes=[IsAdminUser])
     def set_visibility(self, request, pk=None):

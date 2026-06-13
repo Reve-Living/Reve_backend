@@ -1,5 +1,5 @@
 from django.contrib import admin
-from django.utils.html import format_html
+from django.utils.html import format_html, format_html_join
 from .models import (
     Category,
     SubCategory,
@@ -138,6 +138,41 @@ class ReviewAdmin(admin.ModelAdmin):
     list_display = ("product", "name", "rating", "is_visible", "created_by", "created_at")
     list_filter = ("is_visible", "rating")
     search_fields = ("product__name", "name", "comment")
+    readonly_fields = ("media_preview",)
+    fields = ("product", "name", "rating", "comment", "media", "media_preview", "is_visible", "created_by")
+
+    def media_preview(self, obj):
+        media = getattr(obj, "media", []) or []
+        if not media:
+            return "-"
+
+        previews = []
+        for item in media:
+            if isinstance(item, str):
+                url = item
+                media_type = "image"
+            else:
+                url = item.get("url", "")
+                media_type = item.get("type", "")
+            if not url:
+                continue
+            if media_type == "video":
+                previews.append(
+                    format_html(
+                        '<video src="{}" controls style="height:110px;width:150px;object-fit:cover;margin:4px;border:1px solid #ddd;border-radius:4px;"></video>',
+                        url,
+                    )
+                )
+            else:
+                previews.append(
+                    format_html(
+                        '<img src="{}" style="height:110px;width:110px;object-fit:cover;margin:4px;border:1px solid #ddd;border-radius:4px;" />',
+                        url,
+                    )
+                )
+        return format_html_join("", "{}", ((preview,) for preview in previews)) if previews else "-"
+
+    media_preview.short_description = "Review Media"
 
 
 @admin.register(Collection)

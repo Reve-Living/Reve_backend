@@ -1,3 +1,6 @@
+from urllib.parse import urlparse
+
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.db import transaction
@@ -1325,6 +1328,68 @@ class ReviewSerializer(serializers.ModelSerializer):
     def get_created_by_username(self, obj):
         return obj.created_by.username if obj.created_by else None
 
+    def validate_media_url(self, url):
+        parsed = urlparse(url)
+        path = parsed.path or ""
+        if "/review-media/" not in path:
+            raise serializers.ValidationError("Please upload media before submitting the review")
+
+        if not parsed.netloc:
+            return
+
+        allowed_hosts = {
+            urlparse(getattr(settings, "MEDIA_URL", "")).netloc,
+            getattr(settings, "AWS_S3_CUSTOM_DOMAIN", ""),
+        }
+        request = self.context.get("request")
+        if request:
+            allowed_hosts.add(request.get_host())
+
+        if parsed.netloc not in {host for host in allowed_hosts if host}:
+            raise serializers.ValidationError("Please upload media before submitting the review")
+
+    def validate_media(self, value):
+        if value in (None, ""):
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Review media must be a list")
+        if len(value) > 6:
+            raise serializers.ValidationError("Please upload no more than 6 images or videos")
+
+        normalized = []
+        for item in value:
+            if isinstance(item, str):
+                url = item.strip()
+                media_type = "image"
+                name = ""
+                mime_type = ""
+            elif isinstance(item, dict):
+                url = str(item.get("url") or "").strip()
+                media_type = str(item.get("type") or item.get("media_type") or "").strip().lower()
+                name = str(item.get("name") or "").strip()[:255]
+                mime_type = str(item.get("mime_type") or item.get("mime") or "").strip()[:120]
+            else:
+                raise serializers.ValidationError("Each media item must be an uploaded media object")
+
+            if not url:
+                raise serializers.ValidationError("Each media item needs a URL")
+            if url.startswith("data:"):
+                raise serializers.ValidationError("Please upload media before submitting the review")
+            self.validate_media_url(url)
+            if media_type not in ("image", "video"):
+                raise serializers.ValidationError("Review media must be an image or video")
+
+            normalized.append(
+                {
+                    "url": url,
+                    "type": media_type,
+                    "name": name,
+                    "mime_type": mime_type,
+                }
+            )
+
+        return normalized
+
     class Meta:
         model = Review
         fields = [
@@ -1334,6 +1399,7 @@ class ReviewSerializer(serializers.ModelSerializer):
             "name",
             "rating",
             "comment",
+            "media",
             "is_visible",
             "created_at",
             "created_by",

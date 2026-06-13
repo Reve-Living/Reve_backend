@@ -1,13 +1,16 @@
 from django.core import mail
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from unittest.mock import patch
+import tempfile
 
 from .models import (
     Category,
     Order,
     Product,
+    Review,
     SubCategory,
     ProductImage,
     ProductColor,
@@ -783,6 +786,78 @@ class OrderEmailTests(TestCase):
         self.assertEqual(pdf_response["Content-Type"], "application/pdf")
         self.assertIn("attachment;", pdf_response["Content-Disposition"])
         self.assertTrue(pdf_response.content.startswith(b"%PDF"))
+
+
+@override_settings(
+    MEDIA_ROOT=tempfile.mkdtemp(),
+    MEDIA_URL="/media/",
+    STORAGES={
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    },
+)
+class ReviewMediaTests(TestCase):
+    def test_public_review_can_upload_media_and_stays_hidden_until_approved(self):
+        category = Category.objects.create(name="Beds", slug="review-media-beds")
+        product = Product.objects.create(
+            name="Review Media Bed",
+            slug="review-media-bed",
+            category=category,
+            price="299.99",
+            description="A bed for review media tests.",
+        )
+        client = APIClient()
+
+        upload_response = client.post(
+            "/api/reviews/upload_media/",
+            {"file": SimpleUploadedFile("customer-photo.jpg", b"image-bytes", content_type="image/jpeg")},
+            format="multipart",
+        )
+
+        self.assertEqual(upload_response.status_code, 201)
+        self.assertEqual(upload_response.data["type"], "image")
+        self.assertIn("/media/review-media/", upload_response.data["url"])
+
+        create_response = client.post(
+            "/api/reviews/",
+            {
+                "product": product.id,
+                "name": "Customer",
+                "rating": 5,
+                "comment": "Lovely product with photo.",
+                "media": [upload_response.data],
+            },
+            format="json",
+        )
+
+        self.assertEqual(create_response.status_code, 201)
+        self.assertFalse(create_response.data["is_visible"])
+        self.assertEqual(create_response.data["media"][0]["type"], "image")
+
+        external_media_response = client.post(
+            "/api/reviews/",
+            {
+                "product": product.id,
+                "name": "Customer",
+                "rating": 5,
+                "comment": "Trying to attach an external media URL.",
+                "media": [{"url": "https://example.com/review-media/customer-photo.jpg", "type": "image"}],
+            },
+            format="json",
+        )
+        self.assertEqual(external_media_response.status_code, 400)
+
+        public_response = client.get(f"/api/reviews/?product={product.id}")
+        self.assertEqual(public_response.status_code, 200)
+        self.assertEqual(public_response.data, [])
+
+        review = Review.objects.get(pk=create_response.data["id"])
+        review.is_visible = True
+        review.save(update_fields=["is_visible"])
+
+        visible_response = client.get(f"/api/reviews/?product={product.id}")
+        self.assertEqual(visible_response.status_code, 200)
+        self.assertEqual(visible_response.data[0]["media"][0]["url"], upload_response.data["url"])
 
 
 class CategorySortOrderSwapTests(TestCase):

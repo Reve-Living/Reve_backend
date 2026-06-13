@@ -460,6 +460,7 @@ class Review(models.Model):
     name = models.CharField(max_length=100)
     rating = models.IntegerField(default=5)
     comment = models.TextField(blank=True)
+    media = models.JSONField(default=list, blank=True)
     is_visible = models.BooleanField(default=False)
     created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="reviews")
     created_at = models.DateTimeField(auto_now_add=True)
