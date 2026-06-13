@@ -81,6 +81,7 @@ from .emails import send_order_cancellation_emails, send_order_confirmation_emai
 from .delivery_note_pdf import build_delivery_note_pdf
 from .payments import (
     PaymentProviderError,
+    extract_paypal_capture,
     extract_local_order_id_from_paypal,
     extract_paypal_capture_id,
     get_stripe_payment_details,
@@ -116,6 +117,19 @@ def _coerce_bool(value, default: bool = False) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in ("1", "true", "yes", "on")
     return bool(value)
+
+
+def _should_confirm_public_order_on_create(payment_method: str | None) -> bool:
+    return str(payment_method or "").strip().lower() in ("cod", "cash_on_delivery")
+
+
+def _queue_order_confirmation_email(order: Order) -> None:
+    if order.confirmation_email_sent_at:
+        return
+
+    order.confirmation_email_sent_at = timezone.now()
+    order.save(update_fields=["confirmation_email_sent_at"])
+    transaction.on_commit(lambda: send_order_confirmation_emails(order.id))
 
 
 def _get_live_promotions():
@@ -1980,10 +1994,12 @@ class OrderViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ("create", "lookup"):
             return [AllowAny()]
-        if self.action in ("mark_paid", "mark_cancelled"):
+        if self.action == "mark_paid":
             if self.request.user.is_staff:
                 return [IsAdminUser()]
             return [AllowAny()]
+        if self.action == "mark_cancelled":
+            return [IsAdminUser()]
         if self.action == "delivery_note_pdf":
             return [IsAdminUser()]
         if self.request.user.is_staff:
@@ -2134,6 +2150,11 @@ class OrderViewSet(viewsets.ModelViewSet):
                 payment_id=normalized_payment_id,
                 payment_metadata=payment_metadata,
             )
+            capture_status = self._normalized_payment_method(resolved_metadata.get("paypal_capture_status"))
+            if capture_status and capture_status != "completed":
+                raise PaymentProviderError("PayPal payment is not completed yet")
+            if not capture_status and not resolved_metadata.get("paypal_order_id"):
+                raise PaymentProviderError("PayPal payment could not be verified")
             resolved_payment_id = (
                 str(resolved_metadata.get("paypal_capture_id") or "").strip()
                 or normalized_payment_id
@@ -2373,6 +2394,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             self._strip_public_managed_fields(data)
             data["status"] = "pending"
             data["payment_id"] = ""
+            send_confirmation_email = _should_confirm_public_order_on_create(data.get("payment_method"))
 
         items = self._prepare_order_data(data, items, is_admin_request=is_admin_request)
         serializer = self.get_serializer(data=data)
@@ -2383,7 +2405,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         self._sync_cancelled_timestamp(order)
 
         if send_confirmation_email:
-            transaction.on_commit(lambda: send_order_confirmation_emails(order.id))
+            _queue_order_confirmation_email(order)
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
@@ -2464,6 +2486,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             status_value="paid",
         )
         self._sync_cancelled_timestamp(order)
+        _queue_order_confirmation_email(order)
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"])
@@ -2484,17 +2507,7 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def mark_cancelled(self, request, pk=None):
-        order = self._get_order_by_id(pk)
-        is_admin_request = self._is_admin_request(request)
-        self._require_order_access(
-            request,
-            order,
-            allow_email_match=True,
-            error_message="We couldn't verify this cancellation request",
-        )
-
-        if not is_admin_request and order.status in ("shipped", "delivered"):
-            raise ValidationError({"status": "This order can no longer be cancelled online"})
+        order = self.get_object()
 
         if order.status != "cancelled":
             with transaction.atomic():
@@ -2789,7 +2802,11 @@ class PaymentViewSet(viewsets.ViewSet):
         if error:
             return Response(error, status=status.HTTP_400_BAD_REQUEST)
         payload = response.json()
+        capture = extract_paypal_capture(payload)
         capture_id = extract_paypal_capture_id(payload)
+        capture_status = str(capture.get("status") or "").strip()
+        if not capture_id or capture_status.lower() != "completed":
+            return Response(payload)
         local_order_id = extract_local_order_id_from_paypal(payload)
         if local_order_id:
             order = Order.objects.filter(pk=local_order_id).first()
@@ -2798,11 +2815,14 @@ class PaymentViewSet(viewsets.ViewSet):
                 payment_metadata["paypal_order_id"] = str(order_id or "").strip()
                 if capture_id:
                     payment_metadata["paypal_capture_id"] = capture_id
+                if capture_status:
+                    payment_metadata["paypal_capture_status"] = capture_status
                 order.payment_method = "paypal"
                 order.payment_id = capture_id or str(order_id or "").strip()
                 order.payment_metadata = payment_metadata
                 order.status = "paid"
                 order.save(update_fields=["payment_method", "payment_id", "payment_metadata", "status"])
+                _queue_order_confirmation_email(order)
         return Response(payload)
 
     def _paypal_access_token(self):

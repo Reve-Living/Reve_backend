@@ -428,6 +428,7 @@ class Order(models.Model):
     special_notes = models.TextField(blank=True, default="")
     reference_images = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    confirmation_email_sent_at = models.DateTimeField(null=True, blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
     refund_status = models.CharField(max_length=20, blank=True, default="")
     refund_provider = models.CharField(max_length=20, blank=True, default="")

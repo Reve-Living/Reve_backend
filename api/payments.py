@@ -171,10 +171,8 @@ def resolve_paypal_payment_details(payment_id: str = "", payment_metadata: dict 
     capture_id = str(metadata.get("paypal_capture_id") or "").strip()
     paypal_order_id = str(metadata.get("paypal_order_id") or "").strip()
 
-    if capture_id:
+    if capture_id and not paypal_order_id:
         metadata["paypal_capture_id"] = capture_id
-        if paypal_order_id:
-            metadata["paypal_order_id"] = paypal_order_id
         return metadata
 
     order_id_candidates = [paypal_order_id]

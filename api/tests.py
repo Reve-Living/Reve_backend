@@ -31,7 +31,7 @@ from .models import (
     ORDER_NOTIFICATION_EMAIL="info@reveliving.co.uk",
 )
 class OrderEmailTests(TestCase):
-    def test_order_creation_sends_customer_and_admin_emails(self):
+    def test_cash_on_delivery_order_creation_sends_customer_and_admin_emails(self):
         client = APIClient()
         payload = {
             "first_name": "Ayesha",
@@ -45,7 +45,7 @@ class OrderEmailTests(TestCase):
             "floor_number": "2",
             "total_amount": "599.99",
             "delivery_charges": "0.00",
-            "payment_method": "paypal",
+            "payment_method": "cod",
             "payment_id": "public-client-cannot-set-this",
             "status": "paid",
             "send_confirmation_email": False,
@@ -89,15 +89,45 @@ class OrderEmailTests(TestCase):
         self.assertNotIn("Subject: Order Confirmation", customer_email.body)
         self.assertIn("Ayesha Jahangir", customer_email.body)
         self.assertIn("Product Name | Quantity | Price", customer_email.body)
-        self.assertIn("Payment Method: PayPal", customer_email.body)
+        self.assertIn("Payment Method: Cash on Delivery", customer_email.body)
         self.assertIn("Assembly Service: £49.00", customer_email.body)
         self.assertIn("Email: support@reveliving.co.uk", customer_email.body)
         self.assertIn("Phone: +44 7386 340475", customer_email.body)
         self.assertEqual(len(customer_email.attachments), 1)
+        self.assertTrue(response.data["confirmation_email_sent_at"])
 
         order_item = response.data["items"][0]
         self.assertTrue(order_item["assembly_service_selected"])
         self.assertEqual(order_item["assembly_service_price"], "49.00")
+
+    def test_card_order_creation_waits_for_paid_confirmation_before_email(self):
+        client = APIClient()
+        payload = {
+            "first_name": "Card",
+            "last_name": "Pending",
+            "email": "card-pending@example.com",
+            "phone": "+44 1234 567890",
+            "address": "1 Payment Street",
+            "city": "London",
+            "postal_code": "E1 1AA",
+            "delivery_charges": "0.00",
+            "payment_method": "card",
+            "items": [
+                {
+                    "quantity": 1,
+                    "price": "299.99",
+                }
+            ],
+        }
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = client.post("/api/orders/", payload, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["status"], "pending")
+        self.assertEqual(response.data["payment_id"], "")
+        self.assertIsNone(response.data["confirmation_email_sent_at"])
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_admin_can_create_manual_order_without_sending_emails(self):
         client = APIClient()
@@ -277,23 +307,85 @@ class OrderEmailTests(TestCase):
         }
 
         create_response = client.post("/api/orders/", payload, format="json")
-        paid_response = client.post(
-            f"/api/orders/{create_response.data['id']}/mark_paid/",
-            {
-                "email": "payment@example.com",
-                "payment_method": "card",
-                "payment_id": "cs_test_123",
-            },
-            format="json",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            paid_response = client.post(
+                f"/api/orders/{create_response.data['id']}/mark_paid/",
+                {
+                    "email": "payment@example.com",
+                    "payment_method": "card",
+                    "payment_id": "cs_test_123",
+                },
+                format="json",
+            )
 
         self.assertEqual(create_response.status_code, 201)
         self.assertEqual(paid_response.status_code, 200)
         self.assertEqual(paid_response.data["status"], "paid")
         self.assertEqual(paid_response.data["payment_id"], "cs_test_123")
         self.assertEqual(paid_response.data["payment_metadata"]["stripe_payment_intent_id"], "pi_test_123")
+        self.assertTrue(paid_response.data["confirmation_email_sent_at"])
+        self.assertEqual(len(mail.outbox), 2)
 
-    def test_public_cancellation_sets_cancelled_at_and_sends_emails(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            repeat_response = client.post(
+                f"/api/orders/{create_response.data['id']}/mark_paid/",
+                {
+                    "email": "payment@example.com",
+                    "payment_method": "card",
+                    "payment_id": "cs_test_123",
+                },
+                format="json",
+            )
+
+        self.assertEqual(repeat_response.status_code, 200)
+        self.assertEqual(len(mail.outbox), 2)
+
+    @patch("api.views.get_stripe_payment_details")
+    def test_public_mark_paid_rejects_unpaid_card_session_without_email(self, mock_get_stripe_payment_details):
+        mock_get_stripe_payment_details.return_value = {
+            "stripe_checkout_session_id": "cs_test_unpaid",
+            "stripe_payment_status": "unpaid",
+        }
+        client = APIClient()
+        payload = {
+            "first_name": "Unpaid",
+            "last_name": "Card",
+            "email": "unpaid-card@example.com",
+            "phone": "+44 2222 222222",
+            "address": "22 Pending Road",
+            "city": "Birmingham",
+            "postal_code": "B1 1AA",
+            "delivery_charges": "0.00",
+            "payment_method": "card",
+            "items": [
+                {
+                    "quantity": 1,
+                    "price": "149.99",
+                }
+            ],
+        }
+
+        create_response = client.post("/api/orders/", payload, format="json")
+        with self.captureOnCommitCallbacks(execute=True):
+            paid_response = client.post(
+                f"/api/orders/{create_response.data['id']}/mark_paid/",
+                {
+                    "email": "unpaid-card@example.com",
+                    "payment_method": "card",
+                    "payment_id": "cs_test_unpaid",
+                },
+                format="json",
+            )
+
+        self.assertEqual(create_response.status_code, 201)
+        self.assertEqual(paid_response.status_code, 400)
+        self.assertIn("not paid yet", str(paid_response.data["payment_id"]))
+        order = Order.objects.get(pk=create_response.data["id"])
+        self.assertEqual(order.status, "pending")
+        self.assertIsNone(order.confirmation_email_sent_at)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_public_cancellation_is_rejected(self):
         client = APIClient()
         payload = {
             "first_name": "Cancel",
@@ -318,31 +410,20 @@ class OrderEmailTests(TestCase):
 
         mail.outbox.clear()
 
-        with self.captureOnCommitCallbacks(execute=True):
-            cancel_response = client.post(
-                f"/api/orders/{create_response.data['id']}/mark_cancelled/",
-                {"email": "cancel@example.com"},
-                format="json",
-            )
-
-        self.assertEqual(cancel_response.status_code, 200)
-        self.assertEqual(cancel_response.data["status"], "cancelled")
-        self.assertTrue(cancel_response.data["cancelled_at"])
-        self.assertEqual(len(mail.outbox), 2)
-
-        customer_email = next(message for message in mail.outbox if message.to == ["cancel@example.com"])
-        self.assertEqual(
-            customer_email.subject,
-            f"Order Cancelled - Reve Living (Order #{create_response.data['id']})",
+        cancel_response = client.post(
+            f"/api/orders/{create_response.data['id']}/mark_cancelled/",
+            format="json",
         )
-        self.assertIn("Cancellation Date:", customer_email.body)
+
+        self.assertIn(cancel_response.status_code, (401, 403))
+        self.assertEqual(len(mail.outbox), 0)
 
         order = Order.objects.get(pk=create_response.data["id"])
-        self.assertEqual(order.status, "cancelled")
-        self.assertIsNotNone(order.cancelled_at)
+        self.assertEqual(order.status, "pending")
+        self.assertIsNone(order.cancelled_at)
 
     @patch("api.views.refund_stripe_payment")
-    def test_public_cancellation_refunds_prepaid_stripe_order(self, mock_refund_stripe_payment):
+    def test_admin_cancellation_refunds_prepaid_stripe_order(self, mock_refund_stripe_payment):
         mock_refund_stripe_payment.return_value = {
             "status": "succeeded",
             "provider": "stripe",
@@ -356,6 +437,13 @@ class OrderEmailTests(TestCase):
         }
 
         client = APIClient()
+        admin_user = User.objects.create_user(
+            username="cancel-admin",
+            password="password123",
+            email="cancel-admin@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
         payload = {
             "first_name": "Refund",
             "last_name": "Stripe",
@@ -402,6 +490,48 @@ class OrderEmailTests(TestCase):
         self.assertTrue(cancel_response.data["refunded_at"])
         self.assertEqual(len(mail.outbox), 2)
 
+    def test_admin_cancellation_sets_cancelled_at_and_skips_refund_for_cod(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="cancel-cod-admin",
+            password="password123",
+            email="cancel-cod-admin@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+        order = Order.objects.create(
+            first_name="Cancel",
+            last_name="COD",
+            email="cancel-cod@example.com",
+            phone="+44 3333 333333",
+            address="3 Cancel Street",
+            city="Liverpool",
+            postal_code="L1 1AA",
+            total_amount="249.99",
+            delivery_charges="0.00",
+            payment_method="cod",
+            status="pending",
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            cancel_response = client.post(
+                f"/api/orders/{order.id}/mark_cancelled/",
+                format="json",
+            )
+
+        self.assertEqual(cancel_response.status_code, 200)
+        self.assertEqual(cancel_response.data["status"], "cancelled")
+        self.assertEqual(cancel_response.data["refund_status"], "not_required")
+        self.assertTrue(cancel_response.data["cancelled_at"])
+        self.assertEqual(len(mail.outbox), 2)
+
+        customer_email = next(message for message in mail.outbox if message.to == ["cancel-cod@example.com"])
+        self.assertEqual(
+            customer_email.subject,
+            f"Order Cancelled - Reve Living (Order #{order.id})",
+        )
+        self.assertIn("Cancellation Date:", customer_email.body)
+
     @patch("api.views.paypal_request")
     @patch("api.views.paypal_access_token")
     def test_paypal_capture_endpoint_marks_order_paid_and_stores_capture_id(self, mock_paypal_access_token, mock_paypal_request):
@@ -442,7 +572,8 @@ class OrderEmailTests(TestCase):
         mock_paypal_request.return_value = (MockResponse(), None)
 
         client = APIClient()
-        response = client.post("/api/payments/capture_paypal_order/", {"orderID": "PAYPAL-ORDER-123"}, format="json")
+        with self.captureOnCommitCallbacks(execute=True):
+            response = client.post("/api/payments/capture_paypal_order/", {"orderID": "PAYPAL-ORDER-123"}, format="json")
 
         self.assertEqual(response.status_code, 200)
         order.refresh_from_db()
@@ -450,6 +581,9 @@ class OrderEmailTests(TestCase):
         self.assertEqual(order.payment_id, "PAYPAL-CAPTURE-123")
         self.assertEqual(order.payment_metadata["paypal_order_id"], "PAYPAL-ORDER-123")
         self.assertEqual(order.payment_metadata["paypal_capture_id"], "PAYPAL-CAPTURE-123")
+        self.assertEqual(order.payment_metadata["paypal_capture_status"], "COMPLETED")
+        self.assertIsNotNone(order.confirmation_email_sent_at)
+        self.assertEqual(len(mail.outbox), 2)
 
     @patch("api.views.stripe.checkout.Session.create")
     def test_create_stripe_session_stores_checkout_session_reference(self, mock_stripe_session_create):
