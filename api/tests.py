@@ -1944,3 +1944,52 @@ class ProductMattressVisibilityTests(TestCase):
         self.assertEqual(response.status_code, 200)
         saved_override = ProductMattress.objects.get(product=self.product, name=self.hidden_option.name)
         self.assertTrue(saved_override.is_hidden)
+
+
+class GoogleMerchantFeedTests(TestCase):
+    def _feed_xml(self):
+        response = APIClient().get("/google-feed.xml")
+        self.assertEqual(response.status_code, 200)
+        return b"".join(response.streaming_content).decode("utf-8")
+
+    def test_bed_subcategory_feed_uses_lowest_product_price_once(self):
+        category = Category.objects.create(name="Beds", slug="beds-feed")
+        subcategory = SubCategory.objects.create(name="Divan Beds", slug="divan-beds-feed", category=category)
+        product = Product.objects.create(
+            name="Lowest Price Divan",
+            slug="lowest-price-divan",
+            category=category,
+            subcategory=subcategory,
+            price="399.99",
+            short_description="Divan bed",
+            description="Divan bed description",
+        )
+        ProductSize.objects.create(product=product, name="Double", description="4ft6", price_delta="0.00")
+        ProductSize.objects.create(product=product, name="Super King", description="6ft", price_delta="600.00")
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:title>Lowest Price Divan</g:title>", xml)
+        self.assertIn("<g:price>399.99 GBP</g:price>", xml)
+        self.assertNotIn("999.99 GBP", xml)
+        self.assertNotIn("<g:size>", xml)
+
+    def test_non_target_category_feed_keeps_size_variant_prices(self):
+        category = Category.objects.create(name="Chairs", slug="chairs-feed")
+        product = Product.objects.create(
+            name="Variant Chair",
+            slug="variant-chair",
+            category=category,
+            price="199.99",
+            short_description="Chair",
+            description="Chair description",
+        )
+        ProductSize.objects.create(product=product, name="Standard", description="", price_delta="0.00")
+        ProductSize.objects.create(product=product, name="Large", description="", price_delta="50.00")
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:title>Variant Chair - Standard</g:title>", xml)
+        self.assertIn("<g:title>Variant Chair - Large</g:title>", xml)
+        self.assertIn("<g:price>199.99 GBP</g:price>", xml)
+        self.assertIn("<g:price>249.99 GBP</g:price>", xml)

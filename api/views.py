@@ -271,6 +271,16 @@ GOOGLE_PRODUCT_CATEGORY_MAP = {
     "default": "Furniture",
 }
 
+GOOGLE_FEED_LOWEST_PRICE_GROUPS = {
+    "divan beds",
+    "divan ottoman beds",
+    "upholstered beds",
+    "upholstered ottoman beds",
+    "wooden beds",
+    "trundle beds",
+    "underbed storage",
+}
+
 
 def _get_google_product_category(category_name: str) -> str:
     """Map internal category to Google Merchant category."""
@@ -291,7 +301,35 @@ def _get_google_product_category(category_name: str) -> str:
     return GOOGLE_PRODUCT_CATEGORY_MAP["default"]
 
 
-def _build_google_feed_item_xml(product, size=None, frontend_base_url: str = "", backend_base_url: str = "") -> str:
+def _normalized_feed_group_name(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def _uses_lowest_google_feed_price(product) -> bool:
+    category_name = _normalized_feed_group_name(getattr(getattr(product, "category", None), "name", ""))
+    subcategory_name = _normalized_feed_group_name(getattr(getattr(product, "subcategory", None), "name", ""))
+    return category_name in GOOGLE_FEED_LOWEST_PRICE_GROUPS or subcategory_name in GOOGLE_FEED_LOWEST_PRICE_GROUPS
+
+
+def _get_lowest_google_feed_price(product, sizes=None) -> Decimal:
+    prices = [Decimal(product.price)]
+    size_queryset = getattr(product, "sizes", None)
+    size_items = sizes if sizes is not None else (size_queryset.all() if size_queryset is not None else [])
+    for size in size_items:
+        size_price = Decimal(product.price)
+        if getattr(size, "price_delta", None):
+            size_price += Decimal(size.price_delta)
+        prices.append(size_price)
+    return min(prices)
+
+
+def _build_google_feed_item_xml(
+    product,
+    size=None,
+    frontend_base_url: str = "",
+    backend_base_url: str = "",
+    price_override: Decimal | None = None,
+) -> str:
     """
     Build a single product item XML for Google Merchant feed.
     If size is provided, generates a variant entry with item_group_id.
@@ -303,8 +341,8 @@ def _build_google_feed_item_xml(product, size=None, frontend_base_url: str = "",
     brand = (getattr(product.category, "name", "") or "Reve Living").strip()
     
     # Price calculation (base + size delta if applicable)
-    price = Decimal(product.price)
-    if size and hasattr(size, "price_delta") and size.price_delta:
+    price = Decimal(price_override) if price_override is not None else Decimal(product.price)
+    if price_override is None and size and hasattr(size, "price_delta") and size.price_delta:
         price += Decimal(size.price_delta)
     price_text = f"{price.quantize(TWOPLACES)} GBP"
     
@@ -402,6 +440,16 @@ def _build_google_feed_items_xml(product, frontend_base_url: str, backend_base_u
     product._prefetched_fabrics = fabrics
     
     items_xml = ""
+
+    if _uses_lowest_google_feed_price(product):
+        lowest_price = _get_lowest_google_feed_price(product, sizes)
+        return _build_google_feed_item_xml(
+            product,
+            size=None,
+            frontend_base_url=frontend_base_url,
+            backend_base_url=backend_base_url,
+            price_override=lowest_price,
+        )
     
     # If product has sizes, create separate entries for each size
     if sizes:
