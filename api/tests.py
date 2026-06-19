@@ -1984,8 +1984,8 @@ class GoogleMerchantFeedTests(TestCase):
             short_description="Chair",
             description="Chair description",
         )
-        ProductSize.objects.create(product=product, name="Standard", description="", price_delta="0.00")
-        ProductSize.objects.create(product=product, name="Large", description="", price_delta="50.00")
+        ProductSize.objects.create(product=product, name="Standard", description="", price_delta="199.99")
+        ProductSize.objects.create(product=product, name="Large", description="", price_delta="249.99")
 
         xml = self._feed_xml()
 
@@ -1993,3 +1993,24 @@ class GoogleMerchantFeedTests(TestCase):
         self.assertIn("<g:title>Variant Chair - Large</g:title>", xml)
         self.assertIn("<g:price>199.99 GBP</g:price>", xml)
         self.assertIn("<g:price>249.99 GBP</g:price>", xml)
+
+    def test_mattress_feed_uses_base_title_and_lowest_size_price_once(self):
+        category = Category.objects.create(name="Mattresses", slug="mattresses-feed")
+        product = Product.objects.create(
+            name="Milano Super Orthopaedic Mattress",
+            slug="milano-super-orthopaedic-mattress-feed",
+            category=category,
+            price="210.00",
+            short_description="Firm mattress",
+            description="Firm mattress description",
+        )
+        ProductSize.objects.create(product=product, name="3ft Single", description="", price_delta="169.00")
+        ProductSize.objects.create(product=product, name="4ft6 Double", description="", price_delta="338.00")
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:id>{}</g:id>".format(product.id), xml)
+        self.assertIn("<g:title>Milano Super Orthopaedic Mattress</g:title>", xml)
+        self.assertIn("<g:price>169.00 GBP</g:price>", xml)
+        self.assertNotIn("Milano Super Orthopaedic Mattress - 3ft Single", xml)
+        self.assertNotIn("<g:price>338.00 GBP</g:price>", xml)

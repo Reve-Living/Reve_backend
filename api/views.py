@@ -274,6 +274,8 @@ GOOGLE_PRODUCT_CATEGORY_MAP = {
 GOOGLE_FEED_LOWEST_PRICE_GROUPS = {
     "divan beds",
     "divan ottoman beds",
+    "mattress",
+    "mattresses",
     "upholstered beds",
     "upholstered ottoman beds",
     "wooden beds",
@@ -316,10 +318,8 @@ def _get_lowest_google_feed_price(product, sizes=None) -> Decimal:
     size_queryset = getattr(product, "sizes", None)
     size_items = sizes if sizes is not None else (size_queryset.all() if size_queryset is not None else [])
     for size in size_items:
-        size_price = Decimal(product.price)
         if getattr(size, "price_delta", None):
-            size_price += Decimal(size.price_delta)
-        prices.append(size_price)
+            prices.append(Decimal(size.price_delta))
     return min(prices)
 
 
@@ -340,10 +340,10 @@ def _build_google_feed_item_xml(
     availability = "in stock" if product.in_stock else "out of stock"
     brand = (getattr(product.category, "name", "") or "Reve Living").strip()
     
-    # Price calculation (base + size delta if applicable)
+    # ProductSize.price_delta stores the actual size price used by the storefront.
     price = Decimal(price_override) if price_override is not None else Decimal(product.price)
     if price_override is None and size and hasattr(size, "price_delta") and size.price_delta:
-        price += Decimal(size.price_delta)
+        price = Decimal(size.price_delta)
     price_text = f"{price.quantize(TWOPLACES)} GBP"
     
     # ID generation
