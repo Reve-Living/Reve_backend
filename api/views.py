@@ -2179,7 +2179,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         normalized_method = self._normalized_payment_method(payment_method)
         normalized_payment_id = str(payment_id or "").strip()
 
-        if normalized_method == "card":
+        if normalized_method in ("card", "google_pay", "klarna"):
             resolved_metadata = get_stripe_payment_details(
                 payment_id=normalized_payment_id,
                 payment_metadata=payment_metadata,
@@ -2215,7 +2215,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         normalized_method = self._normalized_payment_method(order.payment_method)
         payment_metadata = dict(order.payment_metadata or {})
 
-        if normalized_method == "card":
+        if normalized_method in ("card", "google_pay", "klarna"):
             try:
                 refund_result = refund_stripe_payment(
                     order_id=order.id,
@@ -2774,6 +2774,18 @@ class PaymentViewSet(viewsets.ViewSet):
         metadata = {}
         if order_id:
             metadata["order_id"] = str(order_id)
+        requested_payment_method = str(request.data.get("payment_method") or "card").strip().lower()
+        stripe_payment_method_types = {
+            "card": ["card"],
+            "google_pay": ["card"],
+            "klarna": ["klarna"],
+        }.get(requested_payment_method)
+        if not stripe_payment_method_types:
+            return Response(
+                {"error": "Unsupported Stripe payment method."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        metadata["requested_payment_method"] = requested_payment_method
 
         success_url = request.data.get("success_url")
         if success_url and "{CHECKOUT_SESSION_ID}" not in success_url:
@@ -2782,7 +2794,7 @@ class PaymentViewSet(viewsets.ViewSet):
 
         try:
             session_kwargs = {
-                "payment_method_types": ["card"],
+                "payment_method_types": stripe_payment_method_types,
                 "line_items": line_items,
                 "mode": "payment",
                 "success_url": success_url,
@@ -2801,8 +2813,9 @@ class PaymentViewSet(viewsets.ViewSet):
                 if order:
                     payment_metadata = dict(order.payment_metadata or {})
                     payment_metadata["stripe_checkout_session_id"] = checkout_session.id
+                    payment_metadata["requested_payment_method"] = requested_payment_method
                     order.payment_id = checkout_session.id
-                    order.payment_method = "card"
+                    order.payment_method = requested_payment_method
                     order.payment_metadata = payment_metadata
                     order.save(update_fields=["payment_id", "payment_method", "payment_metadata"])
             return Response({"id": checkout_session.id, "url": checkout_session.url})

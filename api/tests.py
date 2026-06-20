@@ -630,9 +630,104 @@ class OrderEmailTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_stripe_session_create.call_args.kwargs["payment_method_types"], ["card"])
         order = Order.objects.get(pk=create_response.data["id"])
         self.assertEqual(order.payment_id, "cs_test_456")
+        self.assertEqual(order.payment_method, "card")
         self.assertEqual(order.payment_metadata["stripe_checkout_session_id"], "cs_test_456")
+        self.assertEqual(order.payment_metadata["requested_payment_method"], "card")
+
+    @patch("api.views.stripe.checkout.Session.create")
+    def test_create_stripe_session_can_force_klarna(self, mock_stripe_session_create):
+        class MockSession:
+            id = "cs_test_klarna"
+            url = "https://checkout.stripe.com/c/pay/klarna"
+
+        mock_stripe_session_create.return_value = MockSession()
+
+        client = APIClient()
+        create_response = client.post(
+            "/api/orders/",
+            {
+                "first_name": "Klarna",
+                "last_name": "Customer",
+                "email": "klarna@example.com",
+                "phone": "+44 6666 666666",
+                "address": "6 Stripe Road",
+                "city": "Manchester",
+                "postal_code": "M1 2AB",
+                "delivery_charges": "0.00",
+                "payment_method": "klarna",
+                "items": [{"quantity": 1, "price": "199.99"}],
+            },
+            format="json",
+        )
+
+        response = client.post(
+            "/api/payments/create_stripe_session/",
+            {
+                "order_id": create_response.data["id"],
+                "payment_method": "klarna",
+                "items": [{"name": "Bed", "price": "199.99", "quantity": 1}],
+                "delivery_charges": "0.00",
+                "currency": "gbp",
+                "success_url": "https://example.com/checkout?success=1",
+                "cancel_url": "https://example.com/checkout?canceled=1",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_stripe_session_create.call_args.kwargs["payment_method_types"], ["klarna"])
+        order = Order.objects.get(pk=create_response.data["id"])
+        self.assertEqual(order.payment_method, "klarna")
+        self.assertEqual(order.payment_metadata["requested_payment_method"], "klarna")
+
+    @patch("api.views.stripe.checkout.Session.create")
+    def test_create_stripe_session_uses_card_rails_for_google_pay(self, mock_stripe_session_create):
+        class MockSession:
+            id = "cs_test_google_pay"
+            url = "https://checkout.stripe.com/c/pay/google-pay"
+
+        mock_stripe_session_create.return_value = MockSession()
+
+        client = APIClient()
+        create_response = client.post(
+            "/api/orders/",
+            {
+                "first_name": "Google",
+                "last_name": "Pay",
+                "email": "google-pay@example.com",
+                "phone": "+44 6666 666666",
+                "address": "6 Stripe Road",
+                "city": "Manchester",
+                "postal_code": "M1 2AB",
+                "delivery_charges": "0.00",
+                "payment_method": "google_pay",
+                "items": [{"quantity": 1, "price": "199.99"}],
+            },
+            format="json",
+        )
+
+        response = client.post(
+            "/api/payments/create_stripe_session/",
+            {
+                "order_id": create_response.data["id"],
+                "payment_method": "google_pay",
+                "items": [{"name": "Bed", "price": "199.99", "quantity": 1}],
+                "delivery_charges": "0.00",
+                "currency": "gbp",
+                "success_url": "https://example.com/checkout?success=1",
+                "cancel_url": "https://example.com/checkout?canceled=1",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_stripe_session_create.call_args.kwargs["payment_method_types"], ["card"])
+        order = Order.objects.get(pk=create_response.data["id"])
+        self.assertEqual(order.payment_method, "google_pay")
+        self.assertEqual(order.payment_metadata["requested_payment_method"], "google_pay")
 
     def test_admin_can_update_existing_order_and_replace_items(self):
         client = APIClient()
