@@ -30,6 +30,7 @@ def _payment_label(method: str) -> str:
         "paypal": "PayPal",
         "google_pay": "Google Pay",
         "klarna": "Klarna",
+        "afterpay_clearpay": "Clearpay",
     }.get((method or "").lower(), method or "Not provided")
 
 

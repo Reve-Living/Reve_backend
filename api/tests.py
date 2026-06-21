@@ -729,6 +729,52 @@ class OrderEmailTests(TestCase):
         self.assertEqual(order.payment_method, "google_pay")
         self.assertEqual(order.payment_metadata["requested_payment_method"], "google_pay")
 
+    @patch("api.views.stripe.checkout.Session.create")
+    def test_create_stripe_session_can_force_clearpay(self, mock_stripe_session_create):
+        class MockSession:
+            id = "cs_test_clearpay"
+            url = "https://checkout.stripe.com/c/pay/clearpay"
+
+        mock_stripe_session_create.return_value = MockSession()
+
+        client = APIClient()
+        create_response = client.post(
+            "/api/orders/",
+            {
+                "first_name": "Clearpay",
+                "last_name": "Customer",
+                "email": "clearpay@example.com",
+                "phone": "+44 6666 666666",
+                "address": "6 Stripe Road",
+                "city": "Manchester",
+                "postal_code": "M1 2AB",
+                "delivery_charges": "0.00",
+                "payment_method": "afterpay_clearpay",
+                "items": [{"quantity": 1, "price": "199.99"}],
+            },
+            format="json",
+        )
+
+        response = client.post(
+            "/api/payments/create_stripe_session/",
+            {
+                "order_id": create_response.data["id"],
+                "payment_method": "afterpay_clearpay",
+                "items": [{"name": "Bed", "price": "199.99", "quantity": 1}],
+                "delivery_charges": "0.00",
+                "currency": "gbp",
+                "success_url": "https://example.com/checkout?success=1",
+                "cancel_url": "https://example.com/checkout?canceled=1",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_stripe_session_create.call_args.kwargs["payment_method_types"], ["afterpay_clearpay"])
+        order = Order.objects.get(pk=create_response.data["id"])
+        self.assertEqual(order.payment_method, "afterpay_clearpay")
+        self.assertEqual(order.payment_metadata["requested_payment_method"], "afterpay_clearpay")
+
     def test_admin_can_update_existing_order_and_replace_items(self):
         client = APIClient()
         admin_user = User.objects.create_user(

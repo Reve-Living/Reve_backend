@@ -2179,7 +2179,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         normalized_method = self._normalized_payment_method(payment_method)
         normalized_payment_id = str(payment_id or "").strip()
 
-        if normalized_method in ("card", "google_pay", "klarna"):
+        if normalized_method in ("card", "google_pay", "klarna", "afterpay_clearpay"):
             resolved_metadata = get_stripe_payment_details(
                 payment_id=normalized_payment_id,
                 payment_metadata=payment_metadata,
@@ -2215,7 +2215,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         normalized_method = self._normalized_payment_method(order.payment_method)
         payment_metadata = dict(order.payment_metadata or {})
 
-        if normalized_method in ("card", "google_pay", "klarna"):
+        if normalized_method in ("card", "google_pay", "klarna", "afterpay_clearpay"):
             try:
                 refund_result = refund_stripe_payment(
                     order_id=order.id,
@@ -2779,6 +2779,7 @@ class PaymentViewSet(viewsets.ViewSet):
             "card": ["card"],
             "google_pay": ["card"],
             "klarna": ["klarna"],
+            "afterpay_clearpay": ["afterpay_clearpay"],
         }.get(requested_payment_method)
         if not stripe_payment_method_types:
             return Response(
