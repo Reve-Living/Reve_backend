@@ -11,7 +11,7 @@ from django.core.files.base import ContentFile
 from django.contrib.auth.models import User
 from django.utils.text import slugify
 from django.db import transaction
-from django.db.models import Prefetch, Q, Case, When, Value, IntegerField, OuterRef, Subquery
+from django.db.models import Avg, Count, IntegerField, OuterRef, Prefetch, Q, Subquery, Case, When, Value
 from django.core.cache import cache
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
@@ -94,6 +94,13 @@ from .payments import (
 
 
 TWOPLACES = Decimal("0.01")
+
+
+def _with_live_review_summary(queryset):
+    return queryset.annotate(
+        live_rating=Avg("reviews__rating", filter=Q(reviews__is_visible=True)),
+        live_review_count=Count("reviews", filter=Q(reviews__is_visible=True), distinct=True),
+    )
 
 
 def _as_decimal(value, default="0.00"):
@@ -852,7 +859,7 @@ class CollectionViewSet(viewsets.ModelViewSet):
         .prefetch_related(
             Prefetch(
                 "products",
-                queryset=Product.objects.select_related("category", "subcategory")
+                queryset=_with_live_review_summary(Product.objects.select_related("category", "subcategory"))
                 .only(
                     "id",
                     "name",
@@ -1034,7 +1041,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         "dimension_template_link__template__rows",
         Prefetch(
             "suggested_products",
-            queryset=Product.objects.filter(is_hidden=False)
+            queryset=_with_live_review_summary(Product.objects.filter(is_hidden=False))
             .select_related("category", "subcategory")
             .prefetch_related("images", "sizes")
             .order_by("sort_order", "-created_at"),
@@ -1084,7 +1091,7 @@ class ProductViewSet(viewsets.ModelViewSet):
     ]
 
     def _base_queryset(self):
-        return Product.objects.select_related("category", "subcategory")
+        return _with_live_review_summary(Product.objects.select_related("category", "subcategory"))
 
     def get_serializer_class(self):
         if self.action == "list" and self.request.query_params.get("summary") in ("1", "true", "True"):
@@ -1163,7 +1170,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             return super().list(request, *args, **kwargs)
 
         query_string = urlencode(sorted(request.query_params.lists()), doseq=True)
-        cache_key = f"product-list:v4:{query_string}"
+        cache_key = f"product-list:v5:{query_string}"
         cached_data = cache.get(cache_key)
         if cached_data is not None:
             return Response(cached_data)

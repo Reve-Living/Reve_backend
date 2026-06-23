@@ -38,6 +38,20 @@ from .models import (
 )
 
 
+class ProductReviewSummaryMixin:
+    def get_rating(self, obj):
+        value = getattr(obj, "live_rating", None)
+        if value is None:
+            value = getattr(obj, "rating", 0)
+        return round(float(value or 0), 1)
+
+    def get_review_count(self, obj):
+        value = getattr(obj, "live_review_count", None)
+        if value is None:
+            value = getattr(obj, "review_count", 0)
+        return int(value or 0)
+
+
 def _subcategory_links_to_category(subcategory, category) -> bool:
     if not subcategory or not category:
         return False
@@ -376,7 +390,7 @@ class DimensionTemplateSerializer(serializers.ModelSerializer):
         fields = ("id", "name", "slug", "notes", "is_default", "rows")
 
 
-class ProductSerializer(serializers.ModelSerializer):
+class ProductSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
     images = ProductImageSerializer(many=True, read_only=True)
     videos = ProductVideoSerializer(many=True, read_only=True)
     colors = ProductColorSerializer(many=True, read_only=True)
@@ -395,6 +409,8 @@ class ProductSerializer(serializers.ModelSerializer):
     subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
     suggested_products = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
     suggested_products_data = serializers.SerializerMethodField()
+    rating = serializers.SerializerMethodField()
+    review_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -633,13 +649,13 @@ class ProductSerializer(serializers.ModelSerializer):
 
 
 # Lighter serializer for list views to keep responses smaller
-class ProductListSerializer(serializers.ModelSerializer):
+class ProductListSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
     images = ProductImageSerializer(many=True, read_only=True)
     sizes = ProductSizeSerializer(many=True, read_only=True)
     price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     original_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
-    rating = serializers.DecimalField(max_digits=3, decimal_places=1, read_only=True)
-    review_count = serializers.IntegerField(read_only=True)
+    rating = serializers.SerializerMethodField()
+    review_count = serializers.SerializerMethodField()
     category_name = serializers.ReadOnlyField(source="category.name")
     subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
     category_slug = serializers.ReadOnlyField(source="category.slug")

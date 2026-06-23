@@ -1042,6 +1042,32 @@ class ReviewMediaTests(TestCase):
         self.assertEqual(str(product.rating), "5.0")
         self.assertEqual(product.review_count, 1)
 
+    def test_product_list_uses_live_review_summary_for_existing_visible_reviews(self):
+        category = Category.objects.create(name="Living Room", slug="living-room-review-list")
+        product = Product.objects.create(
+            name="Rowley High Gloss Sideboard - 3 Door",
+            slug="rowley-high-gloss-sideboard-3-door",
+            category=category,
+            price="549.00",
+            description="Used to verify storefront review summaries.",
+            rating="0.0",
+            review_count=0,
+        )
+        Review.objects.create(
+            product=product,
+            name="Karen",
+            rating=5,
+            comment="Excellent.",
+            is_visible=True,
+        )
+
+        response = APIClient().get(f"/api/products/?category={category.slug}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["rating"], 5.0)
+        self.assertEqual(response.data[0]["review_count"], 1)
+
 
 class CategorySortOrderSwapTests(TestCase):
     def test_updating_category_sort_order_swaps_with_existing_category(self):
