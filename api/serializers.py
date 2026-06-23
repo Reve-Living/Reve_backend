@@ -312,6 +312,7 @@ class MattressOptionSerializer(serializers.ModelSerializer):
             "features",
             "image_url",
             "price",
+            "original_price",
             "enable_bunk_positions",
             "price_top",
             "price_bottom",
