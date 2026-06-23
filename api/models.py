@@ -1,6 +1,16 @@
-from django.db import models
+from decimal import Decimal, ROUND_HALF_UP
+
+from django.core.cache import cache
 from django.contrib.auth.models import User
+from django.db import models
+from django.db.models import Avg, Count
 from django.utils.text import slugify
+
+
+def _quantize_review_rating(value) -> Decimal:
+    if value is None:
+        return Decimal("0.0")
+    return Decimal(str(value)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
 
 
 class Category(models.Model):
@@ -464,6 +474,39 @@ class Review(models.Model):
     is_visible = models.BooleanField(default=False)
     created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="reviews")
     created_at = models.DateTimeField(auto_now_add=True)
+
+    @staticmethod
+    def sync_product_summary(product_id):
+        if not product_id:
+            return
+
+        aggregates = Review.objects.filter(product_id=product_id, is_visible=True).aggregate(
+            average_rating=Avg("rating"),
+            total_reviews=Count("id"),
+        )
+        Product.objects.filter(pk=product_id).update(
+            rating=_quantize_review_rating(aggregates.get("average_rating")),
+            review_count=int(aggregates.get("total_reviews") or 0),
+        )
+        cache.clear()
+
+    def save(self, *args, **kwargs):
+        previous_product_id = None
+        if self.pk:
+            previous_product_id = (
+                type(self).objects.filter(pk=self.pk).values_list("product_id", flat=True).first()
+            )
+
+        super().save(*args, **kwargs)
+
+        self.sync_product_summary(self.product_id)
+        if previous_product_id and previous_product_id != self.product_id:
+            self.sync_product_summary(previous_product_id)
+
+    def delete(self, *args, **kwargs):
+        product_id = self.product_id
+        super().delete(*args, **kwargs)
+        self.sync_product_summary(product_id)
 
 
 class FilterType(models.Model):

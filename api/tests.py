@@ -1000,6 +1000,48 @@ class ReviewMediaTests(TestCase):
         self.assertEqual(visible_response.status_code, 200)
         self.assertEqual(visible_response.data[0]["media"][0]["url"], upload_response.data["url"])
 
+    def test_review_visibility_updates_product_rating_and_count(self):
+        category = Category.objects.create(name="Tables", slug="review-summary-tables")
+        product = Product.objects.create(
+            name="Review Summary Table",
+            slug="review-summary-table",
+            category=category,
+            price="499.99",
+            description="A table used to verify review aggregation.",
+        )
+
+        first_review = Review.objects.create(
+            product=product,
+            name="Karen",
+            rating=5,
+            comment="Excellent finish.",
+            is_visible=False,
+        )
+        second_review = Review.objects.create(
+            product=product,
+            name="Mo",
+            rating=3,
+            comment="Looks great in person.",
+            is_visible=True,
+        )
+
+        product.refresh_from_db()
+        self.assertEqual(str(product.rating), "3.0")
+        self.assertEqual(product.review_count, 1)
+
+        first_review.is_visible = True
+        first_review.save(update_fields=["is_visible"])
+
+        product.refresh_from_db()
+        self.assertEqual(str(product.rating), "4.0")
+        self.assertEqual(product.review_count, 2)
+
+        second_review.delete()
+
+        product.refresh_from_db()
+        self.assertEqual(str(product.rating), "5.0")
+        self.assertEqual(product.review_count, 1)
+
 
 class CategorySortOrderSwapTests(TestCase):
     def test_updating_category_sort_order_swaps_with_existing_category(self):
