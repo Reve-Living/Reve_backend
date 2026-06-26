@@ -57,6 +57,30 @@ def _subcategory_links_to_category(subcategory, category) -> bool:
         return False
     return category.id in subcategory.linked_category_ids()
 
+
+def _mattress_option_matches_product_scope(item, product) -> bool:
+    category_ids = {int(cid) for cid in (item.get("categories") or []) if cid}
+    subcategory_ids = {int(sid) for sid in (item.get("subcategories") or []) if sid}
+    product_ids = {int(pid) for pid in (item.get("products") or []) if pid}
+
+    if product.subcategory_id:
+        matches_taxonomy = (
+            product.subcategory_id in subcategory_ids
+            or (not subcategory_ids and product.category_id in category_ids)
+            or (not subcategory_ids and not category_ids)
+        )
+    elif product.category_id:
+        matches_taxonomy = (
+            (product.category_id in category_ids and not subcategory_ids)
+            or (not category_ids and not subcategory_ids)
+        )
+    else:
+        matches_taxonomy = not category_ids and not subcategory_ids
+
+    matches_product = not product_ids or product.id in product_ids
+    return matches_taxonomy and matches_product
+
+
 def _clean_text(value, fallback=""):
     text = str(value or "").strip()
     return text or fallback
@@ -302,12 +326,16 @@ class MattressOptionSerializer(serializers.ModelSerializer):
     subcategories = serializers.PrimaryKeyRelatedField(
         many=True, queryset=SubCategory.objects.all(), required=False, allow_null=True
     )
+    products = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Product.objects.all(), required=False, allow_null=True
+    )
 
     class Meta:
         model = MattressOption
         fields = (
             "id",
             "name",
+            "display_name",
             "description",
             "features",
             "image_url",
@@ -319,6 +347,7 @@ class MattressOptionSerializer(serializers.ModelSerializer):
             "price_both",
             "categories",
             "subcategories",
+            "products",
             "is_active",
             "sort_order",
             "prices",
@@ -496,7 +525,7 @@ class ProductSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
         is_admin_request = bool(request and request.user and request.user.is_authenticated and request.user.is_staff)
         options = (
             MattressOption.objects.filter(is_active=True)
-            .prefetch_related("prices", "categories", "subcategories")
+            .prefetch_related("prices", "categories", "subcategories", "products")
             .annotate(
                 sort_priority=Case(
                     When(sort_order__gt=0, then=Value(0)),
@@ -507,22 +536,17 @@ class ProductSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
             .order_by("sort_priority", "sort_order", "name")
         )
 
-        if obj.subcategory_id:
-            options = options.filter(
-                Q(subcategories__id=obj.subcategory_id)
-                | Q(subcategories__isnull=True, categories__id=obj.category_id)
-                | Q(subcategories__isnull=True, categories__isnull=True)
-            ).distinct()
-        elif obj.category_id:
-            options = options.filter(
-                Q(categories__id=obj.category_id, subcategories__isnull=True)
-                | Q(categories__isnull=True, subcategories__isnull=True)
-            ).distinct()
-
-        cache_key = f"mattress-options:product-detail:v1:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
+        cache_key = (
+            f"mattress-options:product-detail:v2:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
+        )
         base_items = cache.get(cache_key)
         if base_items is None:
-            base_items = list(MattressOptionSerializer(options, many=True).data)
+            serialized_items = list(MattressOptionSerializer(options, many=True).data)
+            base_items = [
+                item
+                for item in serialized_items
+                if _mattress_option_matches_product_scope(item, obj)
+            ]
             cache.set(cache_key, base_items, 60 * 5)
         overrides = getattr(obj, "mattresses", None)
         override_items = list(overrides.all()) if overrides is not None else []

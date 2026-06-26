@@ -2155,6 +2155,74 @@ class ProductMattressVisibilityTests(TestCase):
         self.assertTrue(saved_override.is_hidden)
 
 
+class MattressOptionScopedProductTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.category = Category.objects.create(name="Kids Beds", slug="kids-beds-mattress-scope", sort_order=1)
+        self.product_one = Product.objects.create(
+            name="Vision White Bunk Bed",
+            slug="vision-white-bunk-bed-scope",
+            category=self.category,
+            price="499.99",
+            short_description="Kids bed",
+            description="Kids bed description",
+            in_stock=True,
+            is_hidden=False,
+        )
+        self.product_two = Product.objects.create(
+            name="Willow Treehouse Bunk Bed",
+            slug="willow-treehouse-bunk-bed-scope",
+            category=self.category,
+            price="599.99",
+            short_description="Kids bed",
+            description="Another kids bed description",
+            in_stock=True,
+            is_hidden=False,
+        )
+        self.category_wide_option = MattressOption.objects.create(
+            name="Kids Comfort Mattress",
+            display_name="Mattress Number 2",
+            description="For all kids beds",
+            price="89.99",
+        )
+        self.category_wide_option.categories.add(self.category)
+        self.product_specific_option = MattressOption.objects.create(
+            name="Kids Pocket Mattress",
+            display_name="Mattress Number 1",
+            description="Only for one kids bed",
+            price="129.99",
+        )
+        self.product_specific_option.categories.add(self.category)
+        self.product_specific_option.products.add(self.product_one)
+
+    def test_product_detail_includes_only_matching_product_scoped_mattresses(self):
+        response_one = self.client.get(f"/api/products/{self.product_one.id}/")
+        response_two = self.client.get(f"/api/products/{self.product_two.id}/")
+
+        self.assertEqual(response_one.status_code, 200)
+        self.assertEqual(response_two.status_code, 200)
+
+        names_one = [item["name"] for item in response_one.data["mattresses"]]
+        names_two = [item["name"] for item in response_two.data["mattresses"]]
+
+        self.assertCountEqual(names_one, [self.product_specific_option.name, self.category_wide_option.name])
+        self.assertEqual(names_two, [self.category_wide_option.name])
+
+    def test_product_detail_exposes_display_name_for_storefront_cards(self):
+        response = self.client.get(f"/api/products/{self.product_one.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        mattress_lookup = {item["name"]: item for item in response.data["mattresses"]}
+        self.assertEqual(
+            mattress_lookup[self.product_specific_option.name]["display_name"],
+            self.product_specific_option.display_name,
+        )
+        self.assertEqual(
+            mattress_lookup[self.category_wide_option.name]["display_name"],
+            self.category_wide_option.display_name,
+        )
+
+
 class GoogleMerchantFeedTests(TestCase):
     def _feed_xml(self):
         response = APIClient().get("/google-feed.xml")

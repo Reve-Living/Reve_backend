@@ -1799,7 +1799,7 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
     Public GET is allowed; write requires admin.
     """
 
-    queryset = MattressOption.objects.all().prefetch_related("prices")
+    queryset = MattressOption.objects.all().prefetch_related("prices", "categories", "subcategories", "products")
     serializer_class = MattressOptionSerializer
     permission_classes = [IsAdminOrReadOnly]
     http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
@@ -1879,6 +1879,16 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
                 continue
         return cleaned
 
+    def _clean_products(self, products_raw):
+        cleaned = []
+        for pid in products_raw or []:
+            try:
+                product = Product.objects.get(id=pid)
+                cleaned.append(product)
+            except Product.DoesNotExist:
+                continue
+        return cleaned
+
     def _upsert_prices(self, option, prices):
         option.prices.all().delete()
         for p in prices:
@@ -1889,9 +1899,11 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
         prices_raw = data.pop("prices", [])
         categories_raw = data.pop("categories", [])
         subcategories_raw = data.pop("subcategories", [])
+        products_raw = data.pop("products", [])
         prices = self._clean_prices(prices_raw)
         categories = self._clean_categories(categories_raw)
         subcategories = self._clean_subcategories(subcategories_raw)
+        products = self._clean_products(products_raw)
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
         option = serializer.save()
@@ -1900,6 +1912,8 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
             option.categories.set(categories)
         if subcategories is not None:
             option.subcategories.set(subcategories)
+        if products is not None:
+            option.products.set(products)
         self._invalidate_cache()
         return Response(self.get_serializer(option).data, status=status.HTTP_201_CREATED)
 
@@ -1910,9 +1924,11 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
         prices_raw = data.pop("prices", None)
         categories_raw = data.pop("categories", None)
         subcategories_raw = data.pop("subcategories", None)
+        products_raw = data.pop("products", None)
         prices = self._clean_prices(prices_raw) if prices_raw is not None else None
         categories = self._clean_categories(categories_raw) if categories_raw is not None else None
         subcategories = self._clean_subcategories(subcategories_raw) if subcategories_raw is not None else None
+        products = self._clean_products(products_raw) if products_raw is not None else None
         serializer = self.get_serializer(instance, data=data, partial=partial)
         serializer.is_valid(raise_exception=True)
         option = serializer.save()
@@ -1922,6 +1938,8 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
             option.categories.set(categories)
         if subcategories is not None:
             option.subcategories.set(subcategories)
+        if products is not None:
+            option.products.set(products)
         self._invalidate_cache()
         return Response(self.get_serializer(option).data)
 

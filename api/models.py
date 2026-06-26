@@ -298,9 +298,11 @@ class MattressOption(models.Model):
     """
     Global mattress catalogue defined in admin (separate from mattress product category).
     Shared across all beds; per-size pricing stored in MattressOptionPrice.
+    Can also be limited to specific products within the selected category/subcategory scope.
     """
 
     name = models.CharField(max_length=255)
+    display_name = models.CharField(max_length=255, blank=True, default="")
     description = models.TextField(blank=True)
     features = models.TextField(blank=True, default="")
     image_url = models.URLField(max_length=1000, blank=True)
@@ -312,6 +314,7 @@ class MattressOption(models.Model):
     price_both = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     categories = models.ManyToManyField(Category, related_name="mattress_options", blank=True)
     subcategories = models.ManyToManyField(SubCategory, related_name="mattress_options", blank=True)
+    products = models.ManyToManyField("Product", related_name="targeted_mattress_options", blank=True)
     is_active = models.BooleanField(default=True)
     sort_order = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
