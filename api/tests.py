@@ -21,6 +21,7 @@ from .models import (
     ProductFilterValue,
     FilterType,
     FilterOption,
+    CategoryFilter,
     DimensionTemplate,
     MattressOption,
     ProductDimensionTemplate,
@@ -1158,6 +1159,63 @@ class SharedSubcategoryTests(TestCase):
         self.assertEqual(subcategory.category_id, sale.id)
         self.assertEqual(list(subcategory.additional_categories.values_list("id", flat=True)), [])
 
+    def test_product_list_includes_shared_subcategory_products_for_linked_category(self):
+        beds = Category.objects.create(name="Beds", slug="beds-shared-products", sort_order=1)
+        wooden = Category.objects.create(name="Wooden Beds", slug="wooden-beds-shared-products", sort_order=2)
+        subcategory = SubCategory.objects.create(name="Classic Frames", slug="classic-frames-shared", category=beds)
+        subcategory.additional_categories.add(wooden)
+        product = Product.objects.create(
+            name="Oak Frame Bed",
+            slug="oak-frame-bed-shared",
+            category=beds,
+            subcategory=subcategory,
+            price="799.99",
+            short_description="Solid oak frame",
+            description="Solid oak frame with storage options.",
+            is_hidden=False,
+            in_stock=True,
+        )
+
+        response = self.client.get(f"/api/products/?category={wooden.slug}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["id"] for item in response.data], [product.id])
+
+    def test_category_filters_count_shared_subcategory_products_for_linked_category(self):
+        beds = Category.objects.create(name="Beds", slug="beds-shared-filter-counts", sort_order=1)
+        wooden = Category.objects.create(name="Wooden Beds", slug="wooden-beds-shared-filter-counts", sort_order=2)
+        subcategory = SubCategory.objects.create(name="Classic Frames", slug="classic-frames-filter-shared", category=beds)
+        subcategory.additional_categories.add(wooden)
+        product = Product.objects.create(
+            name="Walnut Storage Bed",
+            slug="walnut-storage-bed-shared",
+            category=beds,
+            subcategory=subcategory,
+            price="899.99",
+            short_description="Walnut storage bed",
+            description="Walnut finish bed with drawer storage.",
+            is_hidden=False,
+            in_stock=True,
+        )
+        filter_type = FilterType.objects.create(
+            name="Finish",
+            slug="finish-shared-count",
+            display_type="checkbox",
+        )
+        option = FilterOption.objects.create(
+            filter_type=filter_type,
+            name="Walnut",
+            slug="walnut-shared-count",
+        )
+        CategoryFilter.objects.create(subcategory=subcategory, filter_type=filter_type, is_active=True)
+        ProductFilterValue.objects.create(product=product, filter_option=option)
+
+        response = APIClient().get(f"/api/categories/{wooden.slug}/filters/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["filters"][0]["slug"], filter_type.slug)
+        self.assertEqual(response.data["filters"][0]["options"][0]["product_count"], 1)
+
 
 class ProductDuplicateTests(TestCase):
     def test_admin_can_duplicate_product_with_related_records(self):
@@ -2189,6 +2247,7 @@ class MattressOptionScopedProductTests(TestCase):
         self.product_specific_option = MattressOption.objects.create(
             name="Kids Pocket Mattress",
             display_name="Mattress Number 1",
+            kids_button_label="Top Mattress",
             description="Only for one kids bed",
             price="129.99",
         )
@@ -2216,6 +2275,10 @@ class MattressOptionScopedProductTests(TestCase):
         self.assertEqual(
             mattress_lookup[self.product_specific_option.name]["display_name"],
             self.product_specific_option.display_name,
+        )
+        self.assertEqual(
+            mattress_lookup[self.product_specific_option.name]["kids_button_label"],
+            self.product_specific_option.kids_button_label,
         )
         self.assertEqual(
             mattress_lookup[self.category_wide_option.name]["display_name"],

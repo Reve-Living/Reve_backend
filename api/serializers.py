@@ -336,6 +336,7 @@ class MattressOptionSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "display_name",
+            "kids_button_label",
             "description",
             "features",
             "image_url",

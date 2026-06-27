@@ -1131,7 +1131,11 @@ class ProductViewSet(viewsets.ModelViewSet):
         slug = self.request.query_params.get("slug")
         
         if category:
-            queryset = queryset.filter(category__slug=category)
+            queryset = queryset.filter(
+                Q(category__slug=category)
+                | Q(subcategory__category__slug=category)
+                | Q(subcategory__additional_categories__slug=category)
+            ).distinct()
         if subcategory:
             queryset = queryset.filter(subcategory__slug=subcategory)
         if bestseller:
@@ -3053,10 +3057,12 @@ class CategoryFiltersView(generics.GenericAPIView):
 
         # Precompute product counts in one query (vs per-option loop)
         base_filter_qs = ProductFilterValue.objects.filter(
-            product__category=category,
+            Q(product__category=category)
+            | Q(product__subcategory__category=category)
+            | Q(product__subcategory__additional_categories=category),
             product__in_stock=True,
             **({"product__subcategory": subcategory} if subcategory else {}),
-        )
+        ).distinct()
         option_counts = base_filter_qs.values("filter_option").annotate(product_count=Count("product", distinct=True))
         count_lookup = {row["filter_option"]: row["product_count"] for row in option_counts}
         
