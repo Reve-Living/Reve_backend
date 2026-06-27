@@ -1217,6 +1217,67 @@ class SharedSubcategoryTests(TestCase):
         self.assertEqual(response.data["filters"][0]["options"][0]["product_count"], 1)
 
 
+class ProductSparseUpdateTests(TestCase):
+    def test_sparse_product_put_keeps_existing_related_records(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin-sparse-update",
+            password="password123",
+            email="admin-sparse-update@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Beds", slug="beds-sparse-update", sort_order=1)
+        first_subcategory = SubCategory.objects.create(
+            name="Wooden Beds",
+            slug="wooden-beds-sparse-update",
+            category=category,
+        )
+        second_subcategory = SubCategory.objects.create(
+            name="Storage Beds",
+            slug="storage-beds-sparse-update",
+            category=category,
+        )
+        filter_type = FilterType.objects.create(
+            name="Finish",
+            slug="finish-sparse-update",
+            display_type="checkbox",
+        )
+        option = FilterOption.objects.create(
+            filter_type=filter_type,
+            name="Oak",
+            slug="oak-sparse-update",
+        )
+
+        product = Product.objects.create(
+            name="Sparse Update Bed",
+            slug="sparse-update-bed",
+            category=category,
+            subcategory=first_subcategory,
+            price="599.99",
+            short_description="Original short description",
+            description="Original long description",
+            in_stock=True,
+        )
+        ProductImage.objects.create(product=product, url="https://example.com/bed.webp", alt_text="Main image")
+        ProductSize.objects.create(product=product, name="5ft King", description="King", price_delta="0.00")
+        ProductFilterValue.objects.create(product=product, filter_option=option)
+
+        response = client.put(
+            f"/api/products/{product.id}/",
+            {"subcategory": second_subcategory.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        product.refresh_from_db()
+        self.assertEqual(product.subcategory_id, second_subcategory.id)
+        self.assertEqual(product.images.count(), 1)
+        self.assertEqual(product.sizes.count(), 1)
+        self.assertEqual(product.filter_values.count(), 1)
+
+
 class ProductDuplicateTests(TestCase):
     def test_admin_can_duplicate_product_with_related_records(self):
         client = APIClient()

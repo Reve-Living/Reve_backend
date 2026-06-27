@@ -1233,6 +1233,14 @@ class ProductViewSet(viewsets.ModelViewSet):
     def update(self, request, *args, **kwargs):
         data = request.data.copy()
         simple_visibility_update = set(data.keys()).issubset({"is_hidden"})
+        has_images = "images" in data
+        has_videos = "videos" in data
+        has_colors = "colors" in data
+        has_sizes = "sizes" in data
+        has_styles = "styles" in data
+        has_fabrics = "fabrics" in data
+        has_mattresses = "mattresses" in data
+        has_filter_values = "filter_values" in data
 
         if simple_visibility_update:
             instance = self.get_object()
@@ -1243,17 +1251,23 @@ class ProductViewSet(viewsets.ModelViewSet):
             refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=instance.pk)
             return Response(ProductSerializer(refreshed, context=self.get_serializer_context()).data)
 
-        images = data.pop("images", None)
-        videos = data.pop("videos", None)
-        colors = data.pop("colors", None)
-        sizes = data.pop("sizes", None)
-        styles = data.pop("styles", None)
-        fabrics = data.pop("fabrics", None)
-        mattresses = data.pop("mattresses", None)
-        filter_values = data.pop("filter_values", None)
+        images = data.pop("images", None) if has_images else None
+        videos = data.pop("videos", None) if has_videos else None
+        colors = data.pop("colors", None) if has_colors else None
+        sizes = data.pop("sizes", None) if has_sizes else None
+        styles = data.pop("styles", None) if has_styles else None
+        fabrics = data.pop("fabrics", None) if has_fabrics else None
+        mattresses = data.pop("mattresses", None) if has_mattresses else None
+        filter_values = data.pop("filter_values", None) if has_filter_values else None
 
         images, videos, colors, sizes, styles, fabrics, mattresses = self._validate_related_data(
-            images or [], videos or [], colors or [], sizes or [], styles or [], fabrics or [], mattresses or []
+            images if has_images else [],
+            videos if has_videos else [],
+            colors if has_colors else [],
+            sizes if has_sizes else [],
+            styles if has_styles else [],
+            fabrics if has_fabrics else [],
+            mattresses if has_mattresses else [],
         )
 
         instance = self.get_object()
@@ -1262,32 +1276,32 @@ class ProductViewSet(viewsets.ModelViewSet):
         dimension_template_obj = serializer.validated_data.get("_dimension_template_obj")
         product = serializer.save()
 
-        if images is not None:
+        if has_images:
             product.images.all().delete()
-        if videos is not None:
+        if has_videos:
             product.videos.all().delete()
-        if colors is not None:
+        if has_colors:
             product.colors.all().delete()
-        if sizes is not None:
+        if has_sizes:
             product.sizes.all().delete()
-        if styles is not None:
+        if has_styles:
             product.styles.all().delete()
-        if fabrics is not None:
+        if has_fabrics:
             product.fabrics.all().delete()
-        if mattresses is not None:
+        if has_mattresses:
             product.mattresses.all().delete()
 
         self._handle_related_data(
             product,
-            images or [],
-            videos or [],
-            colors or [],
-            sizes or [],
-            styles or [],
-            fabrics or [],
-            mattresses or [],
+            images if has_images else [],
+            videos if has_videos else [],
+            colors if has_colors else [],
+            sizes if has_sizes else [],
+            styles if has_styles else [],
+            fabrics if has_fabrics else [],
+            mattresses if has_mattresses else [],
         )
-        if filter_values is not None:
+        if has_filter_values:
             self._handle_filter_values(product, filter_values)
 
         self._handle_dimension_template(product, dimension_template_obj)
