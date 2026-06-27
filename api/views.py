@@ -597,37 +597,13 @@ class IsAdminOrReadOnly(IsAdminUser):
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
-    queryset = Category.objects.all().prefetch_related(
-        Prefetch(
-            "subcategories",
-            queryset=SubCategory.objects.select_related("category")
-            .prefetch_related(
-                Prefetch(
-                    "additional_categories",
-                    queryset=Category.objects.only("id", "name", "slug"),
-                    to_attr="_prefetched_additional_categories",
-                )
-            )
-            .order_by("sort_order", "name"),
-            to_attr="prefetched_primary_subcategories",
-        ),
-        Prefetch(
-            "shared_subcategories",
-            queryset=SubCategory.objects.select_related("category")
-            .prefetch_related(
-                Prefetch(
-                    "additional_categories",
-                    queryset=Category.objects.only("id", "name", "slug"),
-                    to_attr="_prefetched_additional_categories",
-                )
-            )
-            .order_by("sort_order", "name"),
-            to_attr="prefetched_shared_subcategories",
-        ),
-    ).order_by("sort_order", "name")
+    queryset = Category.objects.all()
     serializer_class = CategorySerializer
     permission_classes = [IsAdminOrReadOnly]
     http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
+
+    def _include_hidden(self):
+        return bool(getattr(self.request.user, "is_staff", False) or self.request.headers.get("Authorization"))
 
     def _invalidate_cache(self):
         """Ensure category changes are reflected immediately on the site."""
@@ -651,7 +627,31 @@ class CategoryViewSet(viewsets.ModelViewSet):
         return self._cached_list(request, *args, **kwargs)
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        subcategory_queryset = SubCategory.objects.select_related("category").prefetch_related(
+            Prefetch(
+                "additional_categories",
+                queryset=Category.objects.only("id", "name", "slug"),
+                to_attr="_prefetched_additional_categories",
+            )
+        )
+        if not self._include_hidden():
+            subcategory_queryset = subcategory_queryset.filter(is_hidden=False)
+
+        queryset = Category.objects.all()
+        if not self._include_hidden():
+            queryset = queryset.filter(is_hidden=False)
+        queryset = queryset.prefetch_related(
+            Prefetch(
+                "subcategories",
+                queryset=subcategory_queryset.order_by("sort_order", "name"),
+                to_attr="prefetched_primary_subcategories",
+            ),
+            Prefetch(
+                "shared_subcategories",
+                queryset=subcategory_queryset.order_by("sort_order", "name"),
+                to_attr="prefetched_shared_subcategories",
+            ),
+        ).order_by("sort_order", "name")
         slug = self.request.query_params.get("slug")
         if slug:
             queryset = queryset.filter(slug=slug)
@@ -693,6 +693,9 @@ class SubCategoryViewSet(viewsets.ModelViewSet):
     serializer_class = SubCategorySerializer
     permission_classes = [IsAdminOrReadOnly]
 
+    def _include_hidden(self):
+        return bool(getattr(self.request.user, "is_staff", False) or self.request.headers.get("Authorization"))
+
     def _invalidate_cache(self):
         """Ensure category listings reflect subcategory changes immediately."""
         from django.core.cache import cache
@@ -716,6 +719,8 @@ class SubCategoryViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if not self._include_hidden():
+            queryset = queryset.filter(is_hidden=False, category__is_hidden=False)
         category_id = self.request.query_params.get("category")
         if category_id:
             queryset = queryset.filter(Q(category_id=category_id) | Q(additional_categories__id=category_id)).distinct()
@@ -792,6 +797,7 @@ class SubCategoryViewSet(viewsets.ModelViewSet):
                 "slug": subcategory.slug,
                 "description": subcategory.description,
                 "image": subcategory.image,
+                "is_hidden": subcategory.is_hidden,
                 "show_in_collections": subcategory.show_in_collections,
                 "show_in_all_collections": subcategory.show_in_all_collections,
                 "image_alt_text": subcategory.image_alt_text,
@@ -1122,7 +1128,9 @@ class ProductViewSet(viewsets.ModelViewSet):
                 )
         is_admin_request = bool(self.request.user and self.request.user.is_authenticated and self.request.user.is_staff)
         if not is_admin_request:
-            queryset = queryset.filter(is_hidden=False)
+            queryset = queryset.filter(is_hidden=False, category__is_hidden=False).filter(
+                Q(subcategory__isnull=True) | Q(subcategory__is_hidden=False)
+            )
 
         category = self.request.query_params.get("category")
         subcategory = self.request.query_params.get("subcategory")

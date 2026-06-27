@@ -202,6 +202,14 @@ class CategorySerializer(serializers.ModelSerializer):
         fields = "__all__"
 
     def get_subcategories(self, obj):
+        request = self.context.get("request")
+        include_hidden = bool(
+            request
+            and (
+                getattr(request.user, "is_staff", False)
+                or request.headers.get("Authorization")
+            )
+        )
         primary_subcategories = getattr(obj, "prefetched_primary_subcategories", None)
         shared_subcategories = getattr(obj, "prefetched_shared_subcategories", None)
 
@@ -213,11 +221,15 @@ class CategorySerializer(serializers.ModelSerializer):
                 .distinct()
                 .order_by("sort_order", "name")
             )
+            if not include_hidden:
+                queryset = queryset.filter(is_hidden=False)
             return SubCategorySerializer(queryset, many=True, context=self.context).data
 
         combined = []
         seen_ids = set()
         for subcategory in [*(primary_subcategories or []), *(shared_subcategories or [])]:
+            if subcategory.is_hidden and not include_hidden:
+                continue
             if subcategory.id in seen_ids:
                 continue
             combined.append(subcategory)
