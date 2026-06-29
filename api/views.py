@@ -877,6 +877,7 @@ class CollectionViewSet(viewsets.ModelViewSet):
                     "price",
                     "original_price",
                     "discount_percentage",
+                    "stock_status",
                     "in_stock",
                     "is_hidden",
                     "is_bestseller",
@@ -1062,9 +1063,11 @@ class ProductViewSet(viewsets.ModelViewSet):
         "meta_description",
         "category_id",
         "subcategory_id",
+        "imported_from_product_id",
         "price",
         "original_price",
         "discount_percentage",
+        "stock_status",
         "in_stock",
         "is_hidden",
         "is_bestseller",
@@ -1087,7 +1090,9 @@ class ProductViewSet(viewsets.ModelViewSet):
         "slug",
         "category_id",
         "subcategory_id",
+        "imported_from_product_id",
         "price",
+        "stock_status",
         "in_stock",
         "is_hidden",
         "is_bestseller",
@@ -1331,14 +1336,83 @@ class ProductViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
-    def _build_duplicate_slug(self, product):
-        base = slugify(f"{product.slug or product.name}-copy") or "product-copy"
+    @action(detail=True, methods=["post"], permission_classes=[IsAdminUser], url_path="import-copy")
+    def import_copy(self, request, pk=None):
+        source = self.get_queryset().get(pk=pk)
+
+        try:
+            category_id = int(request.data.get("category"))
+        except (TypeError, ValueError):
+            raise ValidationError({"category": "A valid category ID is required."})
+
+        raw_subcategory_id = request.data.get("subcategory")
+        try:
+            subcategory_id = int(raw_subcategory_id) if raw_subcategory_id not in (None, "", "null") else None
+        except (TypeError, ValueError):
+            raise ValidationError({"subcategory": "Subcategory must be a valid ID or null."})
+
+        try:
+            target_category = Category.objects.get(pk=category_id)
+        except Category.DoesNotExist:
+            raise ValidationError({"category": "Category not found."})
+
+        target_subcategory = None
+        if subcategory_id is not None:
+            try:
+                target_subcategory = SubCategory.objects.select_related("category").prefetch_related(
+                    "additional_categories"
+                ).get(pk=subcategory_id)
+            except SubCategory.DoesNotExist:
+                raise ValidationError({"subcategory": "Subcategory not found."})
+
+            if not target_subcategory.is_linked_to_category(target_category):
+                raise ValidationError(
+                    {"subcategory": f"{target_subcategory.name} is not linked to {target_category.name}."}
+                )
+
+        if source.category_id == category_id and source.subcategory_id == subcategory_id:
+            refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=source.pk)
+            return Response(
+                ProductSerializer(refreshed, context=self.get_serializer_context()).data,
+                status=status.HTTP_200_OK,
+            )
+
+        existing_import = Product.objects.filter(
+            imported_from_product_id=source.id,
+            category_id=category_id,
+            subcategory_id=subcategory_id,
+        ).first()
+        if existing_import:
+            refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=existing_import.pk)
+            return Response(
+                ProductSerializer(refreshed, context=self.get_serializer_context()).data,
+                status=status.HTTP_200_OK,
+            )
+
+        with transaction.atomic():
+            imported_product = self._import_product_copy(source, target_category, target_subcategory)
+
+        self._invalidate_cache()
+        refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=imported_product.pk)
+        return Response(
+            ProductSerializer(refreshed, context=self.get_serializer_context()).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def _build_unique_slug(self, raw_value):
+        max_length = Product._meta.get_field("slug").max_length or 255
+        base = slugify(raw_value) or "product"
+        base = base[:max_length]
         slug = base
         counter = 2
         while Product.objects.filter(slug=slug).exists():
-            slug = f"{base}-{counter}"
+            suffix = f"-{counter}"
+            slug = f"{base[: max_length - len(suffix)]}{suffix}"
             counter += 1
         return slug
+
+    def _build_duplicate_slug(self, product):
+        return self._build_unique_slug(f"{product.slug or product.name}-copy")
 
     def _build_duplicate_name(self, product):
         base = f"{product.name} (Copy)"
@@ -1349,14 +1423,47 @@ class ProductViewSet(viewsets.ModelViewSet):
             counter += 1
         return candidate
 
-    def _duplicate_product(self, source):
-        duplicated_product = Product.objects.create(
-            name=self._build_duplicate_name(source),
-            slug=self._build_duplicate_slug(source),
+    def _build_import_slug(self, product, category, subcategory=None):
+        target_scope = getattr(subcategory, "slug", "") or getattr(category, "slug", "") or "import"
+        base_value = f"{product.slug or product.name}-{target_scope}"
+        return self._build_unique_slug(base_value)
+
+    def _next_sort_order_for_scope(self, category_id, subcategory_id):
+        scoped_products = Product.objects.filter(category_id=category_id)
+        if subcategory_id is not None:
+            scoped_products = scoped_products.filter(subcategory_id=subcategory_id)
+
+        last_sort_order = (
+            scoped_products.exclude(sort_order__lte=0)
+            .order_by("-sort_order")
+            .values_list("sort_order", flat=True)
+            .first()
+        )
+        if last_sort_order:
+            return int(last_sort_order) + 1
+        existing_count = scoped_products.count()
+        return existing_count + 1 if existing_count > 0 else 1
+
+    def _create_cloned_product(
+        self,
+        source,
+        *,
+        name,
+        slug,
+        category,
+        subcategory,
+        is_hidden,
+        sort_order,
+        imported_from_product=None,
+    ):
+        cloned_product = Product.objects.create(
+            name=name,
+            slug=slug,
             meta_title=source.meta_title,
             meta_description=source.meta_description,
-            category=source.category,
-            subcategory=source.subcategory,
+            category=category,
+            subcategory=subcategory,
+            imported_from_product=imported_from_product,
             price=source.price,
             original_price=source.original_price,
             discount_percentage=source.discount_percentage,
@@ -1374,8 +1481,9 @@ class ProductViewSet(viewsets.ModelViewSet):
             delivery_charges=source.delivery_charges,
             assembly_service_enabled=source.assembly_service_enabled,
             assembly_service_price=source.assembly_service_price,
+            stock_status=source.resolved_stock_status(),
             in_stock=source.in_stock,
-            is_hidden=True,
+            is_hidden=is_hidden,
             is_bestseller=source.is_bestseller,
             is_new=source.is_new,
             show_size_icons=source.show_size_icons,
@@ -1385,13 +1493,25 @@ class ProductViewSet(viewsets.ModelViewSet):
             dimension_note=source.dimension_note,
             dimension_images=source.dimension_images,
             show_dimensions_table=source.show_dimensions_table,
-            sort_order=0,
+            sort_order=sort_order,
         )
-        duplicated_product.suggested_products.set(source.suggested_products.exclude(pk=source.pk))
+        cloned_product.suggested_products.set(source.suggested_products.exclude(pk=source.pk))
+        self._clone_related_data(source, cloned_product)
+        return cloned_product
 
-        for image in source.images.all():
+    def _clone_related_data(self, source, cloned_product):
+        source_images = list(source.images.all())
+        source_videos = list(source.videos.all())
+        source_colors = list(source.colors.all())
+        source_sizes = list(source.sizes.all())
+        source_styles = list(source.styles.all())
+        source_fabrics = list(source.fabrics.all())
+        source_mattresses = list(source.mattresses.all())
+        source_filter_values = list(source.filter_values.all())
+
+        for image in source_images:
             ProductImage.objects.create(
-                product=duplicated_product,
+                product=cloned_product,
                 url=image.url,
                 color_name=image.color_name,
                 style_name=image.style_name,
@@ -1399,12 +1519,12 @@ class ProductViewSet(viewsets.ModelViewSet):
                 sort_order=image.sort_order,
             )
 
-        for video in source.videos.all():
-            ProductVideo.objects.create(product=duplicated_product, url=video.url)
+        for video in source_videos:
+            ProductVideo.objects.create(product=cloned_product, url=video.url)
 
-        for color in source.colors.all():
+        for color in source_colors:
             ProductColor.objects.create(
-                product=duplicated_product,
+                product=cloned_product,
                 name=color.name,
                 hex_code=color.hex_code,
                 image_url=color.image_url,
@@ -1412,18 +1532,18 @@ class ProductViewSet(viewsets.ModelViewSet):
             )
 
         size_map = {}
-        for size in source.sizes.all():
+        for size in source_sizes:
             cloned_size = ProductSize.objects.create(
-                product=duplicated_product,
+                product=cloned_product,
                 name=size.name,
                 description=size.description,
                 price_delta=size.price_delta,
             )
             size_map[size.id] = cloned_size
 
-        for style in source.styles.all():
+        for style in source_styles:
             ProductStyle.objects.create(
-                product=duplicated_product,
+                product=cloned_product,
                 size=size_map.get(style.size_id),
                 is_shared=style.is_shared,
                 name=style.name,
@@ -1431,18 +1551,18 @@ class ProductViewSet(viewsets.ModelViewSet):
                 options=style.options,
             )
 
-        for fabric in source.fabrics.all():
+        for fabric in source_fabrics:
             ProductFabric.objects.create(
-                product=duplicated_product,
+                product=cloned_product,
                 name=fabric.name,
                 image_url=fabric.image_url,
                 is_shared=fabric.is_shared,
                 colors=fabric.colors,
             )
 
-        for mattress in source.mattresses.all():
+        for mattress in source_mattresses:
             ProductMattress.objects.create(
-                product=duplicated_product,
+                product=cloned_product,
                 source_product=mattress.source_product,
                 name=mattress.name,
                 description=mattress.description,
@@ -1455,20 +1575,41 @@ class ProductViewSet(viewsets.ModelViewSet):
                 is_hidden=mattress.is_hidden,
             )
 
-        for filter_value in source.filter_values.all():
+        for filter_value in source_filter_values:
             ProductFilterValue.objects.create(
-                product=duplicated_product,
+                product=cloned_product,
                 filter_option=filter_value.filter_option,
             )
 
         if hasattr(source, "dimension_template_link"):
             ProductDimensionTemplate.objects.create(
-                product=duplicated_product,
+                product=cloned_product,
                 template=source.dimension_template_link.template,
                 allow_overrides=source.dimension_template_link.allow_overrides,
             )
 
-        return duplicated_product
+    def _duplicate_product(self, source):
+        return self._create_cloned_product(
+            source,
+            name=self._build_duplicate_name(source),
+            slug=self._build_duplicate_slug(source),
+            category=source.category,
+            subcategory=source.subcategory,
+            is_hidden=True,
+            sort_order=0,
+        )
+
+    def _import_product_copy(self, source, category, subcategory=None):
+        return self._create_cloned_product(
+            source,
+            name=source.name,
+            slug=self._build_import_slug(source, category, subcategory),
+            category=category,
+            subcategory=subcategory,
+            is_hidden=source.is_hidden,
+            sort_order=self._next_sort_order_for_scope(category.id, getattr(subcategory, "id", None)),
+            imported_from_product=source,
+        )
 
     def _handle_related_data(self, product, images, videos, colors, sizes, styles, fabrics, mattresses):
         for img in images:

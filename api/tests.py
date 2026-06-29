@@ -1375,6 +1375,128 @@ class ProductDuplicateTests(TestCase):
         self.assertFalse(duplicated.colors.first().is_available)
         self.assertFalse(duplicated.fabrics.first().colors[0]["is_available"])
 
+    def test_admin_can_import_product_copy_into_subcategory_independently(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin-import-copy",
+            password="password123",
+            email="admin-import-copy@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        source_category = Category.objects.create(name="Beds", slug="beds-import", sort_order=1)
+        target_category = Category.objects.create(name="Storage", slug="storage-import", sort_order=2)
+        target_subcategory = SubCategory.objects.create(
+            category=target_category,
+            name="Ottoman Beds",
+            slug="ottoman-beds-import",
+            sort_order=1,
+        )
+        source_product = Product.objects.create(
+            name="Luna Bed",
+            slug="luna-bed-import",
+            category=source_category,
+            price="799.99",
+            short_description="Luna short description",
+            description="Luna long description",
+            in_stock=True,
+            is_hidden=False,
+            sort_order=4,
+        )
+        ProductImage.objects.create(product=source_product, url="https://example.com/luna.jpg", alt_text="Luna")
+        ProductSize.objects.create(product=source_product, name="King", description="5ft", price_delta="25.00")
+
+        response = client.post(
+            f"/api/products/{source_product.id}/import-copy/",
+            {"category": target_category.id, "subcategory": target_subcategory.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        imported_id = response.data["id"]
+        self.assertNotEqual(imported_id, source_product.id)
+
+        imported_product = Product.objects.get(pk=imported_id)
+        self.assertEqual(imported_product.name, source_product.name)
+        self.assertNotEqual(imported_product.slug, source_product.slug)
+        self.assertEqual(imported_product.category_id, target_category.id)
+        self.assertEqual(imported_product.subcategory_id, target_subcategory.id)
+        self.assertEqual(imported_product.imported_from_product_id, source_product.id)
+        self.assertEqual(imported_product.images.count(), 1)
+        self.assertEqual(imported_product.sizes.count(), 1)
+        self.assertGreater(imported_product.sort_order, 0)
+
+        update_response = client.patch(
+            f"/api/products/{imported_product.id}/",
+            {"name": "Luna Bed Imported", "sort_order": 7},
+            format="json",
+        )
+        self.assertEqual(update_response.status_code, 200)
+
+        source_product.refresh_from_db()
+        imported_product.refresh_from_db()
+        self.assertEqual(source_product.name, "Luna Bed")
+        self.assertEqual(source_product.sort_order, 4)
+        self.assertEqual(imported_product.name, "Luna Bed Imported")
+        self.assertEqual(imported_product.sort_order, 1)
+
+        delete_response = client.delete(f"/api/products/{source_product.id}/")
+        self.assertEqual(delete_response.status_code, 204)
+        self.assertTrue(Product.objects.filter(pk=imported_product.id).exists())
+
+    def test_import_copy_reuses_existing_import_for_same_target_scope(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin-import-reuse",
+            password="password123",
+            email="admin-import-reuse@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        source_category = Category.objects.create(name="Beds", slug="beds-import-reuse", sort_order=1)
+        target_category = Category.objects.create(name="Guest Beds", slug="guest-beds-import-reuse", sort_order=2)
+        target_subcategory = SubCategory.objects.create(
+            category=target_category,
+            name="Day Beds",
+            slug="day-beds-import-reuse",
+            sort_order=1,
+        )
+        source_product = Product.objects.create(
+            name="Mila Bed",
+            slug="mila-bed-import-reuse",
+            category=source_category,
+            price="499.99",
+            short_description="Mila short description",
+            description="Mila long description",
+            in_stock=True,
+            is_hidden=False,
+        )
+
+        first_response = client.post(
+            f"/api/products/{source_product.id}/import-copy/",
+            {"category": target_category.id, "subcategory": target_subcategory.id},
+            format="json",
+        )
+        second_response = client.post(
+            f"/api/products/{source_product.id}/import-copy/",
+            {"category": target_category.id, "subcategory": target_subcategory.id},
+            format="json",
+        )
+
+        self.assertEqual(first_response.status_code, 201)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(first_response.data["id"], second_response.data["id"])
+        self.assertEqual(
+            Product.objects.filter(
+                imported_from_product_id=source_product.id,
+                category_id=target_category.id,
+                subcategory_id=target_subcategory.id,
+            ).count(),
+            1,
+        )
+
 
 class ProductVariantAvailabilityTests(TestCase):
     def test_admin_can_save_availability_for_colors_and_fabric_colors(self):
@@ -1463,6 +1585,77 @@ class ProductVariantAvailabilityTests(TestCase):
         self.assertEqual(product.sofa_feature_highlights, ["USB Charging", "Manual Recliner"])
         self.assertFalse(product.colors.first().is_available)
         self.assertFalse(product.fabrics.first().colors[0]["is_available"])
+
+
+class ProductStockStatusTests(TestCase):
+    def test_create_product_with_stock_check_needed_sets_non_purchasable_stock(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin-stock-status",
+            password="password123",
+            email="admin-stock-status@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Beds", slug="beds-stock-status", sort_order=1)
+
+        response = client.post(
+            "/api/products/",
+            {
+                "name": "Stock Check Bed",
+                "slug": "stock-check-bed",
+                "category": category.id,
+                "price": "899.99",
+                "description": "Stock check description",
+                "short_description": "Stock check short description",
+                "stock_status": "stock_check_needed",
+                "images": [],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["stock_status"], Product.STOCK_STATUS_STOCK_CHECK_NEEDED)
+        self.assertFalse(response.data["in_stock"])
+
+        product = Product.objects.get(pk=response.data["id"])
+        self.assertEqual(product.stock_status, Product.STOCK_STATUS_STOCK_CHECK_NEEDED)
+        self.assertFalse(product.in_stock)
+
+    def test_update_product_to_low_stock_keeps_it_purchasable(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin-low-stock-status",
+            password="password123",
+            email="admin-low-stock-status@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Beds", slug="beds-low-stock-status", sort_order=1)
+        product = Product.objects.create(
+            name="Status Bed",
+            slug="status-bed",
+            category=category,
+            price="699.99",
+            short_description="Status short description",
+            description="Status long description",
+        )
+
+        response = client.patch(
+            f"/api/products/{product.id}/",
+            {"stock_status": "low_stock"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["stock_status"], Product.STOCK_STATUS_LOW_STOCK)
+        self.assertTrue(response.data["in_stock"])
+
+        product.refresh_from_db()
+        self.assertEqual(product.stock_status, Product.STOCK_STATUS_LOW_STOCK)
+        self.assertTrue(product.in_stock)
 
 
 class ProductImageOrderTests(TestCase):

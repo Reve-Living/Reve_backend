@@ -450,6 +450,8 @@ class ProductSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
     subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
     category_slug = serializers.ReadOnlyField(source="category.slug")
     subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
+    stock_status = serializers.CharField(read_only=True)
+    imported_from_product = serializers.IntegerField(source="imported_from_product_id", read_only=True, allow_null=True)
     suggested_products = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
     suggested_products_data = serializers.SerializerMethodField()
     rating = serializers.SerializerMethodField()
@@ -482,6 +484,7 @@ class ProductSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
             "delivery_charges",
             "assembly_service_enabled",
             "assembly_service_price",
+            "stock_status",
             "dimension_paragraph",
             "dimension_note",
             "in_stock",
@@ -514,6 +517,7 @@ class ProductSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
             "subcategory_name",
             "category_slug",
             "subcategory_slug",
+            "imported_from_product",
             "suggested_products",
             "suggested_products_data",
         )
@@ -698,6 +702,8 @@ class ProductListSerializer(ProductReviewSummaryMixin, serializers.ModelSerializ
     subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
     category_slug = serializers.ReadOnlyField(source="category.slug")
     subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
+    stock_status = serializers.CharField(read_only=True)
+    imported_from_product = serializers.IntegerField(source="imported_from_product_id", read_only=True, allow_null=True)
     filter_values = serializers.SerializerMethodField()
 
     class Meta:
@@ -713,6 +719,7 @@ class ProductListSerializer(ProductReviewSummaryMixin, serializers.ModelSerializ
             "price",
             "original_price",
             "discount_percentage",
+            "stock_status",
             "in_stock",
             "is_hidden",
             "is_bestseller",
@@ -733,6 +740,7 @@ class ProductListSerializer(ProductReviewSummaryMixin, serializers.ModelSerializ
             "subcategory_name",
             "category_slug",
             "subcategory_slug",
+            "imported_from_product",
             "filter_values",
         ]
 
@@ -760,6 +768,8 @@ class ProductSummarySerializer(serializers.ModelSerializer):
     subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
     category_slug = serializers.ReadOnlyField(source="category.slug")
     subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
+    stock_status = serializers.CharField(read_only=True)
+    imported_from_product = serializers.IntegerField(source="imported_from_product_id", read_only=True, allow_null=True)
 
     class Meta:
         model = Product
@@ -770,6 +780,7 @@ class ProductSummarySerializer(serializers.ModelSerializer):
             "category",
             "subcategory",
             "price",
+            "stock_status",
             "in_stock",
             "is_hidden",
             "is_bestseller",
@@ -779,6 +790,7 @@ class ProductSummarySerializer(serializers.ModelSerializer):
             "subcategory_name",
             "category_slug",
             "subcategory_slug",
+            "imported_from_product",
         ]
 
 
@@ -834,6 +846,7 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             "delivery_charges",
             "assembly_service_enabled",
             "assembly_service_price",
+            "stock_status",
             "in_stock",
             "is_hidden",
             "is_bestseller",
@@ -941,6 +954,16 @@ class ProductWriteSerializer(serializers.ModelSerializer):
                     if size and url:
                         cleaned.append({"size": size, "url": url})
             attrs["dimension_images"] = cleaned
+
+        fallback_in_stock = attrs.get(
+            "in_stock",
+            getattr(self.instance, "in_stock", True) if self.instance is not None else True,
+        )
+        attrs["stock_status"] = Product.normalize_stock_status(
+            attrs.get("stock_status"),
+            fallback_in_stock=bool(fallback_in_stock),
+        )
+        attrs["in_stock"] = Product.is_stock_status_purchasable(attrs["stock_status"])
 
         raw_slug_or_name = attrs.get("slug") or attrs.get("name")
         if raw_slug_or_name:

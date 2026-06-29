@@ -175,6 +175,21 @@ class LifestyleArticle(models.Model):
 
 
 class Product(models.Model):
+    STOCK_STATUS_AVAILABLE = "available"
+    STOCK_STATUS_LOW_STOCK = "low_stock"
+    STOCK_STATUS_OUT_OF_STOCK = "out_of_stock"
+    STOCK_STATUS_STOCK_CHECK_NEEDED = "stock_check_needed"
+    STOCK_STATUS_CHOICES = [
+        (STOCK_STATUS_AVAILABLE, "Available"),
+        (STOCK_STATUS_LOW_STOCK, "Low stock"),
+        (STOCK_STATUS_OUT_OF_STOCK, "Out of stock"),
+        (STOCK_STATUS_STOCK_CHECK_NEEDED, "Stock check needed"),
+    ]
+    PURCHASABLE_STOCK_STATUSES = {
+        STOCK_STATUS_AVAILABLE,
+        STOCK_STATUS_LOW_STOCK,
+    }
+
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True, max_length=255)
     meta_title = models.CharField(max_length=255, blank=True, default="")
@@ -182,6 +197,13 @@ class Product(models.Model):
     category = models.ForeignKey(Category, related_name="products", on_delete=models.CASCADE)
     subcategory = models.ForeignKey(
         SubCategory, related_name="products", on_delete=models.SET_NULL, null=True, blank=True
+    )
+    imported_from_product = models.ForeignKey(
+        "self",
+        related_name="imported_copies",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
     )
     suggested_products = models.ManyToManyField(
         "self",
@@ -206,6 +228,12 @@ class Product(models.Model):
     delivery_charges = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     assembly_service_enabled = models.BooleanField(default=False)
     assembly_service_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    stock_status = models.CharField(
+        max_length=24,
+        choices=STOCK_STATUS_CHOICES,
+        default="",
+        blank=True,
+    )
     in_stock = models.BooleanField(default=True)
     is_hidden = models.BooleanField(default=False)
     is_bestseller = models.BooleanField(default=False)
@@ -228,6 +256,27 @@ class Product(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+    @classmethod
+    def normalize_stock_status(cls, value, fallback_in_stock: bool = True) -> str:
+        normalized = str(value or "").strip().lower()
+        valid_statuses = {choice for choice, _label in cls.STOCK_STATUS_CHOICES}
+        if normalized in valid_statuses:
+            return normalized
+        return cls.STOCK_STATUS_AVAILABLE if fallback_in_stock else cls.STOCK_STATUS_OUT_OF_STOCK
+
+    @classmethod
+    def is_stock_status_purchasable(cls, status: str) -> bool:
+        return status in cls.PURCHASABLE_STOCK_STATUSES
+
+    def resolved_stock_status(self) -> str:
+        return self.normalize_stock_status(self.stock_status, fallback_in_stock=bool(self.in_stock))
+
+    def save(self, *args, **kwargs):
+        resolved_status = self.resolved_stock_status()
+        self.stock_status = resolved_status
+        self.in_stock = self.is_stock_status_purchasable(resolved_status)
+        super().save(*args, **kwargs)
 
     class Meta:
         ordering = ["sort_order", "-created_at"]
