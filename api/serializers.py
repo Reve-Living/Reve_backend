@@ -889,6 +889,12 @@ class ProductWriteSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         description = attrs.get("description", getattr(self.instance, "description", ""))
         short_description = attrs.get("short_description", getattr(self.instance, "short_description", ""))
+        category = attrs.get("category", getattr(self.instance, "category", None))
+        subcategory = (
+            attrs.get("subcategory")
+            if "subcategory" in attrs
+            else getattr(self.instance, "subcategory", None)
+        )
 
         if isinstance(description, str):
             description = description.strip()
@@ -904,6 +910,11 @@ class ProductWriteSerializer(serializers.ModelSerializer):
                 short_description = f"{short_description[:217].rstrip()}..."
 
         attrs["short_description"] = short_description or ""
+
+        if subcategory is not None and category is not None and not subcategory.is_linked_to_category(category):
+            raise serializers.ValidationError(
+                {"subcategory": f"{subcategory.name} is not linked to {category.name}."}
+            )
 
         raw_sofa_feature_highlights = attrs.get(
             "sofa_feature_highlights",

@@ -1277,6 +1277,116 @@ class ProductSparseUpdateTests(TestCase):
         self.assertEqual(product.sizes.count(), 1)
         self.assertEqual(product.filter_values.count(), 1)
 
+    def test_sparse_product_put_allows_linked_shared_subcategory_category_change(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin-shared-subcategory-update",
+            password="password123",
+            email="admin-shared-subcategory-update@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        console_tables = Category.objects.create(name="Console Tables", slug="console-tables-shared-update", sort_order=1)
+        side_console_tables = Category.objects.create(
+            name="Side & Console Tables",
+            slug="side-console-tables-shared-update",
+            sort_order=2,
+        )
+        shared_subcategory = SubCategory.objects.create(
+            name="Console Tables",
+            slug="console-tables-shared-subcategory-update",
+            category=console_tables,
+        )
+        shared_subcategory.additional_categories.add(side_console_tables)
+
+        existing_target_product = Product.objects.create(
+            name="Side Console Table Existing",
+            slug="side-console-table-existing",
+            category=side_console_tables,
+            subcategory=shared_subcategory,
+            price="449.99",
+            short_description="Existing side console table",
+            description="Existing side console table description",
+            sort_order=1,
+            in_stock=True,
+        )
+        moving_product = Product.objects.create(
+            name="Console Table Moving",
+            slug="console-table-moving",
+            category=console_tables,
+            subcategory=shared_subcategory,
+            price="499.99",
+            short_description="Moving console table",
+            description="Moving console table description",
+            sort_order=1,
+            in_stock=True,
+        )
+
+        response = client.put(
+            f"/api/products/{moving_product.id}/",
+            {
+                "category": side_console_tables.id,
+                "subcategory": shared_subcategory.id,
+                "sort_order": 1,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        moving_product.refresh_from_db()
+        existing_target_product.refresh_from_db()
+        self.assertEqual(moving_product.category_id, side_console_tables.id)
+        self.assertEqual(moving_product.subcategory_id, shared_subcategory.id)
+
+        ordered_ids = list(
+            Product.objects.filter(category=side_console_tables, subcategory=shared_subcategory)
+            .order_by("sort_order", "-created_at", "-id")
+            .values_list("id", flat=True)
+        )
+        self.assertEqual(ordered_ids, [moving_product.id, existing_target_product.id])
+        self.assertEqual(existing_target_product.sort_order, 2)
+
+    def test_sparse_product_put_rejects_category_not_linked_to_existing_subcategory(self):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="admin-invalid-shared-subcategory-update",
+            password="password123",
+            email="admin-invalid-shared-subcategory-update@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+
+        console_tables = Category.objects.create(name="Console Tables", slug="console-tables-invalid-update", sort_order=1)
+        sideboards = Category.objects.create(name="Sideboards", slug="sideboards-invalid-update", sort_order=2)
+        console_subcategory = SubCategory.objects.create(
+            name="Console Tables",
+            slug="console-tables-invalid-subcategory-update",
+            category=console_tables,
+        )
+        product = Product.objects.create(
+            name="Console Table Product",
+            slug="console-table-product-invalid-update",
+            category=console_tables,
+            subcategory=console_subcategory,
+            price="549.99",
+            short_description="Console table",
+            description="Console table description",
+            in_stock=True,
+        )
+
+        response = client.put(
+            f"/api/products/{product.id}/",
+            {"category": sideboards.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("subcategory", response.data)
+        product.refresh_from_db()
+        self.assertEqual(product.category_id, console_tables.id)
+        self.assertEqual(product.subcategory_id, console_subcategory.id)
+
 
 class ProductDuplicateTests(TestCase):
     def test_admin_can_duplicate_product_with_related_records(self):
