@@ -100,6 +100,15 @@ PRODUCT_DETAIL_CACHE_TTL = int(os.getenv("PRODUCT_DETAIL_CACHE_TTL", "300"))
 CATEGORY_FILTER_CACHE_TTL = int(os.getenv("CATEGORY_FILTER_CACHE_TTL", "300"))
 
 
+def _has_shared_cache_backend() -> bool:
+    backend = str((settings.CACHES.get("default") or {}).get("BACKEND", "")).strip()
+    return backend == "django_redis.cache.RedisCache"
+
+
+def _wants_empty_success_response(request) -> bool:
+    return str(request.query_params.get("response") or "").strip().lower() == "none"
+
+
 def _primary_image_subquery():
     return (
         ProductImage.objects.filter(product_id=OuterRef("pk"))
@@ -877,7 +886,7 @@ class CollectionViewSet(viewsets.ModelViewSet):
         .prefetch_related(
             Prefetch(
                 "products",
-                queryset=_with_live_review_summary(Product.objects.select_related("category", "subcategory"))
+                queryset=Product.objects.select_related("category", "subcategory")
                 .only(
                     "id",
                     "name",
@@ -1074,7 +1083,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         "dimension_template_link__template__rows",
         Prefetch(
             "suggested_products",
-            queryset=_with_live_review_summary(Product.objects.filter(is_hidden=False))
+            queryset=Product.objects.filter(is_hidden=False)
             .select_related("category", "subcategory")
             .prefetch_related("images", "sizes")
             .order_by("sort_order", "-created_at"),
@@ -1146,7 +1155,7 @@ class ProductViewSet(viewsets.ModelViewSet):
     ]
 
     def _base_queryset(self):
-        return _with_live_review_summary(Product.objects.select_related("category", "subcategory"))
+        return Product.objects.select_related("category", "subcategory")
 
     def _is_admin_summary_request(self):
         return (
@@ -1258,7 +1267,12 @@ class ProductViewSet(viewsets.ModelViewSet):
         the process cache, and the short TTL smooths over cold Render/Neon waits.
         """
         is_admin_request = bool(request.user and request.user.is_authenticated and request.user.is_staff)
-        can_cache = request.method == "GET" and not is_admin_request
+        can_cache = (
+            request.method == "GET"
+            and not is_admin_request
+            and PRODUCT_LIST_CACHE_TTL > 0
+            and _has_shared_cache_backend()
+        )
         if not can_cache:
             return super().list(request, *args, **kwargs)
 
@@ -1275,7 +1289,12 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def retrieve(self, request, *args, **kwargs):
         is_admin_request = bool(request.user and request.user.is_authenticated and request.user.is_staff)
-        can_cache = request.method == "GET" and not is_admin_request
+        can_cache = (
+            request.method == "GET"
+            and not is_admin_request
+            and PRODUCT_DETAIL_CACHE_TTL > 0
+            and _has_shared_cache_backend()
+        )
         if not can_cache:
             return super().retrieve(request, *args, **kwargs)
 
@@ -1314,6 +1333,8 @@ class ProductViewSet(viewsets.ModelViewSet):
         self._handle_dimension_template(product, dimension_template_obj)
 
         self._invalidate_cache()
+        if _wants_empty_success_response(request):
+            return Response(status=status.HTTP_204_NO_CONTENT)
         return Response(
             ProductSerializer(product, context=self.get_serializer_context()).data,
             status=status.HTTP_201_CREATED,
@@ -1337,6 +1358,8 @@ class ProductViewSet(viewsets.ModelViewSet):
             serializer.is_valid(raise_exception=True)
             serializer.save()
             self._invalidate_cache()
+            if _wants_empty_success_response(request):
+                return Response(status=status.HTTP_204_NO_CONTENT)
             refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=instance.pk)
             return Response(ProductSerializer(refreshed, context=self.get_serializer_context()).data)
 
@@ -1396,6 +1419,8 @@ class ProductViewSet(viewsets.ModelViewSet):
         self._handle_dimension_template(product, dimension_template_obj)
 
         self._invalidate_cache()
+        if _wants_empty_success_response(request):
+            return Response(status=status.HTTP_204_NO_CONTENT)
         return Response(ProductSerializer(product, context=self.get_serializer_context()).data)
 
     @action(detail=True, methods=["post"], permission_classes=[IsAdminUser], url_path="duplicate")

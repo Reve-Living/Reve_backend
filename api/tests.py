@@ -1928,6 +1928,74 @@ class ProductImageOrderTests(TestCase):
         self.assertEqual([item["id"] for item in response.data[0]["suggested_products_data"]], [suggested.id])
 
 
+@override_settings(
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "test-product-list-cache",
+            "TIMEOUT": None,
+        }
+    }
+)
+class ProductListCachingTests(TestCase):
+    def test_public_product_list_skips_cache_when_backend_is_not_shared(self):
+        category = Category.objects.create(name="Beds", slug="beds-no-shared-cache", sort_order=1)
+        Product.objects.create(
+            name="Cache Fresh Bed",
+            slug="cache-fresh-bed",
+            category=category,
+            price="499.99",
+            short_description="Short",
+            description="Long",
+        )
+
+        with patch("api.views.cache.get") as mock_cache_get, patch("api.views.cache.set") as mock_cache_set:
+            response = APIClient().get("/api/products/?summary=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        mock_cache_get.assert_not_called()
+        mock_cache_set.assert_not_called()
+
+    def test_admin_product_update_can_return_no_content(self):
+        admin_user = User.objects.create_user(
+            username="admin-no-content-update",
+            password="password123",
+            email="admin-no-content-update@example.com",
+            is_staff=True,
+        )
+        category = Category.objects.create(name="Beds", slug="beds-no-content-update", sort_order=1)
+        product = Product.objects.create(
+            name="No Content Bed",
+            slug="no-content-bed",
+            category=category,
+            price="499.99",
+            short_description="Short",
+            description="Long",
+            sort_order=3,
+        )
+
+        client = APIClient()
+        client.force_authenticate(user=admin_user)
+        response = client.put(
+            f"/api/products/{product.id}/?response=none",
+            {
+                "name": product.name,
+                "slug": product.slug,
+                "category": category.id,
+                "price": "499.99",
+                "short_description": product.short_description,
+                "description": product.description,
+                "sort_order": 1,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        product.refresh_from_db()
+        self.assertEqual(product.sort_order, 1)
+
+
 class ProductSortOrderSwapTests(TestCase):
     def test_public_product_list_hides_hidden_products(self):
         client = APIClient()
