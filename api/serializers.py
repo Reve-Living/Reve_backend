@@ -878,6 +878,40 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
         ]
 
 
+class ProductAdminListSerializer(serializers.ModelSerializer):
+    price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    original_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    category_name = serializers.ReadOnlyField(source="category.name")
+    subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
+    category_slug = serializers.ReadOnlyField(source="category.slug")
+    subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
+    stock_status = serializers.CharField(read_only=True)
+    imported_from_product = serializers.IntegerField(source="imported_from_product_id", read_only=True, allow_null=True)
+
+    class Meta:
+        model = Product
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "category",
+            "subcategory",
+            "price",
+            "original_price",
+            "stock_status",
+            "in_stock",
+            "is_hidden",
+            "is_bestseller",
+            "is_new",
+            "sort_order",
+            "category_name",
+            "subcategory_name",
+            "category_slug",
+            "subcategory_slug",
+            "imported_from_product",
+        ]
+
+
 class ProductWriteSerializer(serializers.ModelSerializer):
     slug = serializers.CharField(
         required=False,

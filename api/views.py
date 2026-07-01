@@ -60,6 +60,7 @@ from .serializers import (
     SubCategorySerializer,
     ProductSerializer,
     ProductSummarySerializer,
+    ProductAdminListSerializer,
     ProductWriteSerializer,
     OrderSerializer,
     ReviewSerializer,
@@ -1127,11 +1128,35 @@ class ProductViewSet(viewsets.ModelViewSet):
         "sort_order",
         "created_at",
     ]
+    _admin_list_only_fields = [
+        "id",
+        "name",
+        "slug",
+        "category_id",
+        "subcategory_id",
+        "imported_from_product_id",
+        "price",
+        "original_price",
+        "stock_status",
+        "in_stock",
+        "is_hidden",
+        "is_bestseller",
+        "is_new",
+        "sort_order",
+    ]
 
     def _base_queryset(self):
         return _with_live_review_summary(Product.objects.select_related("category", "subcategory"))
 
+    def _is_admin_summary_request(self):
+        return (
+            self.action == "list"
+            and self.request.query_params.get("admin_summary") in ("1", "true", "True")
+        )
+
     def get_serializer_class(self):
+        if self._is_admin_summary_request():
+            return ProductAdminListSerializer
         if self.action == "list" and self.request.query_params.get("summary") in ("1", "true", "True"):
             return ProductSummarySerializer
         if self.action == "list" and not self.request.query_params.get("slug"):
@@ -1144,9 +1169,21 @@ class ProductViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         # Choose a lighter prefetch set for list views (most traffic)
         is_list = self.action == "list" and not self.request.query_params.get("slug")
+        is_admin_summary = self._is_admin_summary_request()
         is_summary = is_list and self.request.query_params.get("summary") in ("1", "true", "True")
         primary_image_subquery = _primary_image_subquery()
-        if is_summary:
+        if is_admin_summary:
+            queryset = (
+                Product.objects.select_related("category", "subcategory")
+                .only(
+                    *self._admin_list_only_fields,
+                    "category__name",
+                    "category__slug",
+                    "subcategory__name",
+                    "subcategory__slug",
+                )
+            )
+        elif is_summary:
             queryset = (
                 self._base_queryset()
                 .prefetch_related(self._size_list_prefetch)
