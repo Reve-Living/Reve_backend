@@ -1808,6 +1808,47 @@ class ProductStockStatusTests(TestCase):
 
 
 class ProductImageOrderTests(TestCase):
+    def test_product_update_preserves_image_sort_order(self):
+        admin_user = User.objects.create_user(
+            username="admin-image-order",
+            password="password123",
+            email="admin-image-order@example.com",
+            is_staff=True,
+        )
+        client = APIClient()
+        client.force_authenticate(user=admin_user)
+
+        category = Category.objects.create(name="Beds", slug="beds-image-sort-save", sort_order=1)
+        product = Product.objects.create(
+            name="Sortable Image Bed",
+            slug="sortable-image-bed",
+            category=category,
+            price="499.99",
+            short_description="Short",
+            description="Long",
+        )
+
+        response = client.patch(
+            f"/api/products/{product.id}/",
+            {
+                "images": [
+                    {"url": "https://example.com/second.jpg", "sort_order": 2},
+                    {"url": "https://example.com/first.jpg", "sort_order": 1},
+                ]
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        product.refresh_from_db()
+        self.assertEqual(
+            list(product.images.order_by("sort_order", "id").values_list("url", flat=True)),
+            [
+                "https://example.com/first.jpg",
+                "https://example.com/second.jpg",
+            ],
+        )
+
     def test_product_summary_handles_products_without_images(self):
         category = Category.objects.create(name="Beds", slug="beds-summary-no-images", sort_order=1)
         product = Product.objects.create(

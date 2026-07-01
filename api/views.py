@@ -1206,6 +1206,9 @@ class ProductViewSet(viewsets.ModelViewSet):
                     filter_values__filter_option__filter_type=ft
                 ).distinct()
         
+        if category and not subcategory:
+            return queryset.order_by("subcategory__sort_order", "subcategory__name", "sort_order", "-created_at")
+
         return queryset.order_by("sort_order", "-created_at")
 
     def _invalidate_cache(self):
@@ -1757,6 +1760,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             color_name = str((img or {}).get("color_name", "")).strip()
             style_name = str((img or {}).get("style_name", "")).strip()
             alt_text = str((img or {}).get("alt_text", "")).strip()
+            raw_sort_order = (img or {}).get("sort_order", 0)
             if not url:
                 continue
             if len(url) > image_url_max:
@@ -1767,7 +1771,19 @@ class ProductViewSet(viewsets.ModelViewSet):
                 raise ValidationError({"images": [f"Image style name too long (max {image_style_max} chars)."]})
             if alt_text and len(alt_text) > image_alt_max:
                 raise ValidationError({"images": [f"Image alt text too long (max {image_alt_max} chars)."]})
-            cleaned_images.append({"url": url, "color_name": color_name, "style_name": style_name, "alt_text": alt_text})
+            try:
+                sort_order = max(int(raw_sort_order or 0), 0)
+            except (TypeError, ValueError):
+                sort_order = 0
+            cleaned_images.append(
+                {
+                    "url": url,
+                    "color_name": color_name,
+                    "style_name": style_name,
+                    "alt_text": alt_text,
+                    "sort_order": sort_order,
+                }
+            )
 
         cleaned_videos = []
         for vid in videos:
