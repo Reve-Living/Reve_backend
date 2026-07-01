@@ -95,8 +95,8 @@ from .payments import (
 
 
 TWOPLACES = Decimal("0.01")
-PRODUCT_LIST_CACHE_TTL = int(os.getenv("PRODUCT_LIST_CACHE_TTL", "300"))
-PRODUCT_DETAIL_CACHE_TTL = int(os.getenv("PRODUCT_DETAIL_CACHE_TTL", "300"))
+PRODUCT_LIST_CACHE_TTL = int(os.getenv("PRODUCT_LIST_CACHE_TTL", "30"))
+PRODUCT_DETAIL_CACHE_TTL = int(os.getenv("PRODUCT_DETAIL_CACHE_TTL", "60"))
 CATEGORY_FILTER_CACHE_TTL = int(os.getenv("CATEGORY_FILTER_CACHE_TTL", "300"))
 
 
@@ -107,6 +107,16 @@ def _has_usable_cache_backend() -> bool:
 
 def _wants_empty_success_response(request) -> bool:
     return str(request.query_params.get("response") or "").strip().lower() == "none"
+
+
+def _positive_int_query_param(request, key, maximum=100):
+    try:
+        value = int(str(request.query_params.get(key) or "").strip())
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return min(value, maximum)
 
 
 def _primary_image_subquery():
@@ -1321,9 +1331,19 @@ class ProductViewSet(viewsets.ModelViewSet):
                 ).distinct()
         
         if category and not subcategory:
-            return queryset.order_by("subcategory__sort_order", "subcategory__name", "sort_order", "-created_at")
+            queryset = queryset.order_by("subcategory__sort_order", "subcategory__name", "sort_order", "-created_at")
+        else:
+            queryset = queryset.order_by("sort_order", "-created_at")
 
-        return queryset.order_by("sort_order", "-created_at")
+        if is_summary:
+            try:
+                limit = int(self.request.query_params.get("limit") or 0)
+            except (TypeError, ValueError):
+                limit = 0
+            if limit > 0:
+                queryset = queryset[: min(limit, 100)]
+
+        return queryset
 
     def _invalidate_cache(self):
         """Drop cached product lists after admin changes."""
@@ -1334,6 +1354,12 @@ class ProductViewSet(viewsets.ModelViewSet):
         Cache anonymous storefront product lists briefly. Admin mutations clear
         the process cache, and the short TTL smooths over cold Render/Neon waits.
         """
+        limit = _positive_int_query_param(request, "limit", maximum=100)
+        is_limited_summary = (
+            limit is not None
+            and request.query_params.get("summary") in ("1", "true", "True")
+            and not self._is_admin_summary_request()
+        )
         is_admin_request = bool(request.user and request.user.is_authenticated and request.user.is_staff)
         can_cache = (
             request.method == "GET"
@@ -1342,6 +1368,10 @@ class ProductViewSet(viewsets.ModelViewSet):
             and _has_usable_cache_backend()
         )
         if not can_cache:
+            if is_limited_summary:
+                queryset = self.filter_queryset(self.get_queryset())[:limit]
+                serializer = self.get_serializer(queryset, many=True)
+                return Response(serializer.data)
             return super().list(request, *args, **kwargs)
 
         query_string = urlencode(sorted(request.query_params.lists()), doseq=True)
@@ -1350,7 +1380,12 @@ class ProductViewSet(viewsets.ModelViewSet):
         if cached_data is not None:
             return Response(cached_data)
 
-        response = super().list(request, *args, **kwargs)
+        if is_limited_summary:
+            queryset = self.filter_queryset(self.get_queryset())[:limit]
+            serializer = self.get_serializer(queryset, many=True)
+            response = Response(serializer.data)
+        else:
+            response = super().list(request, *args, **kwargs)
         if response.status_code == status.HTTP_200_OK:
             cache.set(cache_key, response.data, PRODUCT_LIST_CACHE_TTL)
         return response

@@ -1944,6 +1944,24 @@ class ProductImageOrderTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data[0]["sizes"][0]["id"], size.id)
 
+    def test_product_summary_limit_returns_only_requested_count(self):
+        category = Category.objects.create(name="Beds", slug="beds-summary-limit", sort_order=1)
+        for index in range(3):
+            Product.objects.create(
+                name=f"Limited Bed {index}",
+                slug=f"limited-bed-{index}",
+                category=category,
+                price="599.99",
+                short_description="Short",
+                description="Long",
+                sort_order=index,
+            )
+
+        response = APIClient().get(f"/api/products/?category={category.slug}&summary=1&limit=2")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 2)
+
     def test_product_summary_can_include_filter_values_on_demand(self):
         category = Category.objects.create(name="Beds", slug="beds-summary-include-filters", sort_order=1)
         product = Product.objects.create(
