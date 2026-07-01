@@ -1254,11 +1254,22 @@ class ProductViewSet(viewsets.ModelViewSet):
         slug = self.request.query_params.get("slug")
         
         if category:
-            queryset = queryset.filter(
-                Q(category__slug=category)
-                | Q(subcategory__category__slug=category)
-                | Q(subcategory__additional_categories__slug=category)
-            ).distinct()
+            category_id = Category.objects.filter(slug=category).values_list("id", flat=True).first()
+            if not category_id:
+                return queryset.none()
+
+            linked_subcategory_ids = list(
+                SubCategory.objects.filter(
+                    Q(category_id=category_id) | Q(additional_categories__id=category_id)
+                )
+                .values_list("id", flat=True)
+                .distinct()
+            )
+
+            category_filter = Q(category_id=category_id)
+            if linked_subcategory_ids:
+                category_filter |= Q(subcategory_id__in=linked_subcategory_ids)
+            queryset = queryset.filter(category_filter)
         if subcategory:
             queryset = queryset.filter(subcategory__slug=subcategory)
         if bestseller:
