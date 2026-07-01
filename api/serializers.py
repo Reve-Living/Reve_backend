@@ -74,6 +74,23 @@ def _get_first_related_item(obj, relation_name):
     return None
 
 
+def _serialize_filter_values(obj):
+    values = getattr(obj, "filter_values_all", None)
+    if values is None:
+        values = ProductFilterValue.objects.filter(product=obj).select_related("filter_option__filter_type")
+    result = []
+    for val in values:
+        ft = val.filter_option.filter_type
+        result.append(
+            {
+                "filter_type": ft.slug,
+                "option": val.filter_option.slug,
+                "filter_option_id": val.filter_option.id,
+            }
+        )
+    return result
+
+
 def _subcategory_links_to_category(subcategory, category) -> bool:
     if not subcategory or not category:
         return False
@@ -309,6 +326,18 @@ class ProductListImageSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     url = serializers.CharField()
     alt_text = serializers.CharField(allow_blank=True, required=False)
+
+
+class ProductSummaryColorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductColor
+        fields = ("id", "name", "hex_code", "is_available")
+
+
+class ProductSummaryStyleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductStyle
+        fields = ("id", "name", "options")
 
 
 class ProductStyleSerializer(serializers.ModelSerializer):
@@ -795,21 +824,7 @@ class ProductListSerializer(ProductReviewSummaryMixin, serializers.ModelSerializ
         return []
 
     def get_filter_values(self, obj):
-        # Lightweight payload for client-side filtering
-        values = getattr(obj, "filter_values_all", None)
-        if values is None:
-            values = ProductFilterValue.objects.filter(product=obj).select_related("filter_option__filter_type")
-        result = []
-        for val in values:
-            ft = val.filter_option.filter_type
-            result.append(
-                {
-                    "filter_type": ft.slug,
-                    "option": val.filter_option.slug,
-                    "filter_option_id": val.filter_option.id,
-                }
-            )
-        return result
+        return _serialize_filter_values(obj)
 
 
 class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
@@ -818,6 +833,8 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
     original_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     short_description = serializers.CharField(read_only=True)
     sizes = ProductSizeSerializer(many=True, read_only=True)
+    colors = ProductSummaryColorSerializer(many=True, read_only=True)
+    styles = ProductSummaryStyleSerializer(many=True, read_only=True)
     rating = serializers.SerializerMethodField()
     review_count = serializers.SerializerMethodField()
     category_name = serializers.ReadOnlyField(source="category.name")
@@ -826,6 +843,7 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
     subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
     stock_status = serializers.CharField(read_only=True)
     imported_from_product = serializers.IntegerField(source="imported_from_product_id", read_only=True, allow_null=True)
+    filter_values = serializers.SerializerMethodField()
 
     def get_images(self, obj):
         primary_url = str(getattr(obj, "primary_image_url", "") or "").strip()
@@ -849,6 +867,9 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
             ).data
         return []
 
+    def get_filter_values(self, obj):
+        return _serialize_filter_values(obj)
+
     class Meta:
         model = Product
         fields = [
@@ -869,12 +890,15 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
             "review_count",
             "images",
             "sizes",
+            "colors",
+            "styles",
             "short_description",
             "category_name",
             "subcategory_name",
             "category_slug",
             "subcategory_slug",
             "imported_from_product",
+            "filter_values",
         ]
 
 

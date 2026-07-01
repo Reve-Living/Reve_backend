@@ -1866,6 +1866,45 @@ class ProductImageOrderTests(TestCase):
         self.assertEqual([item["id"] for item in response.data], [product.id])
         self.assertEqual(response.data[0]["images"], [])
 
+    def test_product_summary_includes_lightweight_filter_and_variant_data(self):
+        category = Category.objects.create(name="Beds", slug="beds-summary-filters", sort_order=1)
+        product = Product.objects.create(
+            name="Filter Ready Bed",
+            slug="filter-ready-bed",
+            category=category,
+            price="599.99",
+            short_description="Short",
+            description="Long",
+        )
+        ProductColor.objects.create(
+            product=product,
+            name="Ivory",
+            hex_code="#fffff0",
+            is_available=True,
+        )
+        ProductStyle.objects.create(
+            product=product,
+            name="Headboard",
+            options=[{"label": "Panel"}],
+        )
+        filter_type = FilterType.objects.create(name="Fabric", slug="fabric")
+        filter_option = FilterOption.objects.create(
+            filter_type=filter_type,
+            name="Boucle",
+            slug="boucle",
+        )
+        ProductFilterValue.objects.create(product=product, filter_option=filter_option)
+
+        response = APIClient().get("/api/products/?summary=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data[0]["colors"], [{"id": product.colors.first().id, "name": "Ivory", "hex_code": "#fffff0", "is_available": True}])
+        self.assertEqual(response.data[0]["styles"], [{"id": product.styles.first().id, "name": "Headboard", "options": [{"label": "Panel"}]}])
+        self.assertEqual(
+            response.data[0]["filter_values"],
+            [{"filter_type": "fabric", "option": "boucle", "filter_option_id": filter_option.id}],
+        )
+
     def test_product_images_are_returned_in_sort_order(self):
         category = Category.objects.create(name="Beds", slug="beds-images-order", sort_order=1)
         product = Product.objects.create(

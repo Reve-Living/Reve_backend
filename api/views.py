@@ -1055,25 +1055,37 @@ class ProductViewSet(viewsets.ModelViewSet):
         "sizes",
         queryset=ProductSize.objects.only("id", "product_id", "name", "description", "price_delta").order_by("id"),
     )
-    _list_prefetches = [
-        _size_list_prefetch,
-        Prefetch(
-            "filter_values",
-            queryset=(
-                ProductFilterValue.objects.select_related("filter_option__filter_type")
-                .only(
-                    "id",
-                    "product_id",
-                    "filter_option_id",
-                    "filter_option__id",
-                    "filter_option__slug",
-                    "filter_option__filter_type__id",
-                    "filter_option__filter_type__slug",
-                )
-            ),
-            to_attr="filter_values_all",
+    _filter_values_list_prefetch = Prefetch(
+        "filter_values",
+        queryset=(
+            ProductFilterValue.objects.select_related("filter_option__filter_type")
+            .only(
+                "id",
+                "product_id",
+                "filter_option_id",
+                "filter_option__id",
+                "filter_option__slug",
+                "filter_option__filter_type__id",
+                "filter_option__filter_type__slug",
+            )
         ),
+        to_attr="filter_values_all",
+    )
+    _summary_color_prefetch = Prefetch(
+        "colors",
+        queryset=ProductColor.objects.only("id", "product_id", "name", "hex_code", "is_available").order_by("id"),
+    )
+    _summary_style_prefetch = Prefetch(
+        "styles",
+        queryset=ProductStyle.objects.only("id", "product_id", "name", "options").order_by("id"),
+    )
+    _summary_prefetches = [
+        _size_list_prefetch,
+        _filter_values_list_prefetch,
+        _summary_color_prefetch,
+        _summary_style_prefetch,
     ]
+    _list_prefetches = [_size_list_prefetch, _filter_values_list_prefetch]
     _detail_prefetches = ["images"] + _list_prefetches + [
         "videos",
         "colors",
@@ -1195,7 +1207,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         elif is_summary:
             queryset = (
                 self._base_queryset()
-                .prefetch_related(self._size_list_prefetch)
+                .prefetch_related(*self._summary_prefetches)
                 .annotate(primary_image_url=Subquery(primary_image_subquery))
                 .only(*self._summary_only_fields, "category__name", "category__slug", "subcategory__name", "subcategory__slug")
             )
