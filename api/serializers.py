@@ -845,6 +845,23 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
     imported_from_product = serializers.IntegerField(source="imported_from_product_id", read_only=True, allow_null=True)
     filter_values = serializers.SerializerMethodField()
 
+    def _query_flag(self, key):
+        request = self.context.get("request")
+        if not request:
+            return False
+        return request.query_params.get(key) in ("1", "true", "True")
+
+    def get_fields(self):
+        fields = super().get_fields()
+        include_filters = self._query_flag("include_filters")
+        include_variants = self._query_flag("include_variants")
+        if not include_filters:
+            fields.pop("filter_values", None)
+        if not include_variants:
+            fields.pop("colors", None)
+            fields.pop("styles", None)
+        return fields
+
     def get_images(self, obj):
         primary_url = str(getattr(obj, "primary_image_url", "") or "").strip()
         if primary_url:

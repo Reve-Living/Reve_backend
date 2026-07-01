@@ -1866,7 +1866,7 @@ class ProductImageOrderTests(TestCase):
         self.assertEqual([item["id"] for item in response.data], [product.id])
         self.assertEqual(response.data[0]["images"], [])
 
-    def test_product_summary_includes_lightweight_filter_and_variant_data(self):
+    def test_product_summary_omits_filter_and_variant_fields_by_default(self):
         category = Category.objects.create(name="Beds", slug="beds-summary-filters", sort_order=1)
         product = Product.objects.create(
             name="Filter Ready Bed",
@@ -1898,12 +1898,72 @@ class ProductImageOrderTests(TestCase):
         response = APIClient().get("/api/products/?summary=1")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data[0]["colors"], [{"id": product.colors.first().id, "name": "Ivory", "hex_code": "#fffff0", "is_available": True}])
-        self.assertEqual(response.data[0]["styles"], [{"id": product.styles.first().id, "name": "Headboard", "options": [{"label": "Panel"}]}])
+        self.assertNotIn("colors", response.data[0])
+        self.assertNotIn("styles", response.data[0])
+        self.assertNotIn("filter_values", response.data[0])
+
+    def test_product_summary_can_include_filter_values_on_demand(self):
+        category = Category.objects.create(name="Beds", slug="beds-summary-include-filters", sort_order=1)
+        product = Product.objects.create(
+            name="Filter Ready Bed",
+            slug="filter-ready-bed-include-filters",
+            category=category,
+            price="599.99",
+            short_description="Short",
+            description="Long",
+        )
+        filter_type = FilterType.objects.create(name="Fabric", slug="fabric-include")
+        filter_option = FilterOption.objects.create(
+            filter_type=filter_type,
+            name="Boucle",
+            slug="boucle-include",
+        )
+        ProductFilterValue.objects.create(product=product, filter_option=filter_option)
+
+        response = APIClient().get("/api/products/?summary=1&include_filters=1")
+
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.data[0]["filter_values"],
-            [{"filter_type": "fabric", "option": "boucle", "filter_option_id": filter_option.id}],
+            [{"filter_type": "fabric-include", "option": "boucle-include", "filter_option_id": filter_option.id}],
         )
+        self.assertNotIn("colors", response.data[0])
+        self.assertNotIn("styles", response.data[0])
+
+    def test_product_summary_can_include_variants_on_demand(self):
+        category = Category.objects.create(name="Beds", slug="beds-summary-include-variants", sort_order=1)
+        product = Product.objects.create(
+            name="Variant Ready Bed",
+            slug="variant-ready-bed",
+            category=category,
+            price="599.99",
+            short_description="Short",
+            description="Long",
+        )
+        color = ProductColor.objects.create(
+            product=product,
+            name="Ivory",
+            hex_code="#fffff0",
+            is_available=True,
+        )
+        style = ProductStyle.objects.create(
+            product=product,
+            name="Headboard",
+            options=[{"label": "Panel"}],
+        )
+
+        response = APIClient().get("/api/products/?summary=1&include_variants=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data[0]["colors"],
+            [{"id": color.id, "name": "Ivory", "hex_code": "#fffff0", "is_available": True}],
+        )
+        self.assertEqual(
+            response.data[0]["styles"],
+            [{"id": style.id, "name": "Headboard", "options": [{"label": "Panel"}]}],
+        )
+        self.assertNotIn("filter_values", response.data[0])
 
     def test_product_images_are_returned_in_sort_order(self):
         category = Category.objects.create(name="Beds", slug="beds-images-order", sort_order=1)

@@ -1079,12 +1079,9 @@ class ProductViewSet(viewsets.ModelViewSet):
         "styles",
         queryset=ProductStyle.objects.only("id", "product_id", "name", "options").order_by("id"),
     )
-    _summary_prefetches = [
-        _size_list_prefetch,
-        _filter_values_list_prefetch,
-        _summary_color_prefetch,
-        _summary_style_prefetch,
-    ]
+    _summary_base_prefetches = [_size_list_prefetch]
+    _summary_filter_prefetches = [_filter_values_list_prefetch]
+    _summary_variant_prefetches = [_summary_color_prefetch, _summary_style_prefetch]
     _list_prefetches = [_size_list_prefetch, _filter_values_list_prefetch]
     _detail_prefetches = ["images"] + _list_prefetches + [
         "videos",
@@ -1175,6 +1172,20 @@ class ProductViewSet(viewsets.ModelViewSet):
             and self.request.query_params.get("admin_summary") in ("1", "true", "True")
         )
 
+    def _summary_includes_filters(self):
+        return (
+            self.action == "list"
+            and self.request.query_params.get("summary") in ("1", "true", "True")
+            and self.request.query_params.get("include_filters") in ("1", "true", "True")
+        )
+
+    def _summary_includes_variants(self):
+        return (
+            self.action == "list"
+            and self.request.query_params.get("summary") in ("1", "true", "True")
+            and self.request.query_params.get("include_variants") in ("1", "true", "True")
+        )
+
     def get_serializer_class(self):
         if self._is_admin_summary_request():
             return ProductAdminListSerializer
@@ -1205,9 +1216,14 @@ class ProductViewSet(viewsets.ModelViewSet):
                 )
             )
         elif is_summary:
+            summary_prefetches = list(self._summary_base_prefetches)
+            if self._summary_includes_filters():
+                summary_prefetches.extend(self._summary_filter_prefetches)
+            if self._summary_includes_variants():
+                summary_prefetches.extend(self._summary_variant_prefetches)
             queryset = (
                 self._base_queryset()
-                .prefetch_related(*self._summary_prefetches)
+                .prefetch_related(*summary_prefetches)
                 .annotate(primary_image_url=Subquery(primary_image_subquery))
                 .only(*self._summary_only_fields, "category__name", "category__slug", "subcategory__name", "subcategory__slug")
             )
