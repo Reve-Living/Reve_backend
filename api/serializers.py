@@ -283,6 +283,12 @@ class ProductSizeSerializer(serializers.ModelSerializer):
         fields = ("id", "name", "description", "price_delta")
 
 
+class ProductListImageSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    url = serializers.CharField()
+    alt_text = serializers.CharField(allow_blank=True, required=False)
+
+
 class ProductStyleSerializer(serializers.ModelSerializer):
     size = ProductSizeSerializer(read_only=True)
     size_id = serializers.IntegerField(source="size.id", read_only=True)
@@ -531,7 +537,7 @@ class ProductSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
                 .prefetch_related("images", "sizes")
                 .order_by("sort_order", "-created_at")
             )
-        return ProductListSerializer(queryset, many=True).data
+        return ProductSummarySerializer(queryset, many=True).data
 
     def get_mattresses(self, obj):
         """
@@ -692,7 +698,7 @@ class ProductSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
 
 # Lighter serializer for list views to keep responses smaller
 class ProductListSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
-    images = ProductImageSerializer(many=True, read_only=True)
+    images = serializers.SerializerMethodField()
     sizes = ProductSizeSerializer(many=True, read_only=True)
     price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     original_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
@@ -744,6 +750,30 @@ class ProductListSerializer(ProductReviewSummaryMixin, serializers.ModelSerializ
             "filter_values",
         ]
 
+    def get_images(self, obj):
+        primary_url = str(getattr(obj, "primary_image_url", "") or "").strip()
+        if primary_url:
+            return ProductListImageSerializer(
+                [{"id": 0, "url": primary_url, "alt_text": obj.name or ""}],
+                many=True,
+            ).data
+
+        prefetched = getattr(obj, "images", None)
+        if prefetched:
+            image = next(iter(prefetched), None)
+            if image and getattr(image, "url", ""):
+                return ProductListImageSerializer(
+                    [
+                        {
+                            "id": int(getattr(image, "id", 0) or 0),
+                            "url": image.url,
+                            "alt_text": getattr(image, "alt_text", "") or obj.name or "",
+                        }
+                    ],
+                    many=True,
+                ).data
+        return []
+
     def get_filter_values(self, obj):
         # Lightweight payload for client-side filtering
         values = getattr(obj, "filter_values_all", None)
@@ -762,14 +792,44 @@ class ProductListSerializer(ProductReviewSummaryMixin, serializers.ModelSerializ
         return result
 
 
-class ProductSummarySerializer(serializers.ModelSerializer):
+class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
+    images = serializers.SerializerMethodField()
     price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    original_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    short_description = serializers.CharField(read_only=True)
+    sizes = ProductSizeSerializer(many=True, read_only=True)
+    rating = serializers.SerializerMethodField()
+    review_count = serializers.SerializerMethodField()
     category_name = serializers.ReadOnlyField(source="category.name")
     subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
     category_slug = serializers.ReadOnlyField(source="category.slug")
     subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
     stock_status = serializers.CharField(read_only=True)
     imported_from_product = serializers.IntegerField(source="imported_from_product_id", read_only=True, allow_null=True)
+
+    def get_images(self, obj):
+        primary_url = str(getattr(obj, "primary_image_url", "") or "").strip()
+        if primary_url:
+            return ProductListImageSerializer(
+                [{"id": 0, "url": primary_url, "alt_text": obj.name or ""}],
+                many=True,
+            ).data
+
+        prefetched = getattr(obj, "images", None)
+        if prefetched:
+            image = next(iter(prefetched), None)
+            if image and getattr(image, "url", ""):
+                return ProductListImageSerializer(
+                    [
+                        {
+                            "id": int(getattr(image, "id", 0) or 0),
+                            "url": image.url,
+                            "alt_text": getattr(image, "alt_text", "") or obj.name or "",
+                        }
+                    ],
+                    many=True,
+                ).data
+        return []
 
     class Meta:
         model = Product
@@ -780,12 +840,18 @@ class ProductSummarySerializer(serializers.ModelSerializer):
             "category",
             "subcategory",
             "price",
+            "original_price",
             "stock_status",
             "in_stock",
             "is_hidden",
             "is_bestseller",
             "is_new",
             "sort_order",
+            "rating",
+            "review_count",
+            "images",
+            "sizes",
+            "short_description",
             "category_name",
             "subcategory_name",
             "category_slug",

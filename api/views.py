@@ -99,6 +99,14 @@ PRODUCT_DETAIL_CACHE_TTL = int(os.getenv("PRODUCT_DETAIL_CACHE_TTL", "300"))
 CATEGORY_FILTER_CACHE_TTL = int(os.getenv("CATEGORY_FILTER_CACHE_TTL", "300"))
 
 
+def _primary_image_subquery():
+    return (
+        ProductImage.objects.filter(product_id=OuterRef("pk"))
+        .order_by("sort_order", "id")
+        .values("url")[:1]
+    )
+
+
 def _with_live_review_summary(queryset):
     return queryset.annotate(
         live_rating=Avg("reviews__rating", filter=Q(reviews__is_visible=True)),
@@ -1033,16 +1041,30 @@ class ProductViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminOrReadOnly]
 
     # Prefetch groups tuned for list vs detail
-    _list_prefetches = [
-        "images",
+    _size_list_prefetch = Prefetch(
         "sizes",
+        queryset=ProductSize.objects.only("id", "product_id", "name", "description", "price_delta").order_by("id"),
+    )
+    _list_prefetches = [
+        _size_list_prefetch,
         Prefetch(
             "filter_values",
-            queryset=ProductFilterValue.objects.select_related("filter_option__filter_type"),
+            queryset=(
+                ProductFilterValue.objects.select_related("filter_option__filter_type")
+                .only(
+                    "id",
+                    "product_id",
+                    "filter_option_id",
+                    "filter_option__id",
+                    "filter_option__slug",
+                    "filter_option__filter_type__id",
+                    "filter_option__filter_type__slug",
+                )
+            ),
             to_attr="filter_values_all",
         ),
     ]
-    _detail_prefetches = _list_prefetches + [
+    _detail_prefetches = ["images"] + _list_prefetches + [
         "videos",
         "colors",
         "styles",
@@ -1095,6 +1117,8 @@ class ProductViewSet(viewsets.ModelViewSet):
         "subcategory_id",
         "imported_from_product_id",
         "price",
+        "original_price",
+        "short_description",
         "stock_status",
         "in_stock",
         "is_hidden",
@@ -1121,18 +1145,27 @@ class ProductViewSet(viewsets.ModelViewSet):
         # Choose a lighter prefetch set for list views (most traffic)
         is_list = self.action == "list" and not self.request.query_params.get("slug")
         is_summary = is_list and self.request.query_params.get("summary") in ("1", "true", "True")
+        primary_image_subquery = _primary_image_subquery()
         if is_summary:
-            queryset = self._base_queryset().only(*self._summary_only_fields, "category__name", "category__slug", "subcategory__name", "subcategory__slug")
+            queryset = (
+                self._base_queryset()
+                .prefetch_related(self._size_list_prefetch)
+                .annotate(primary_image_url=Subquery(primary_image_subquery))
+                .only(*self._summary_only_fields, "category__name", "category__slug", "subcategory__name", "subcategory__slug")
+            )
         else:
             prefetches = self._list_prefetches if is_list else self._detail_prefetches
             queryset = self._base_queryset().prefetch_related(*prefetches)
             if is_list:
-                queryset = queryset.only(
-                    *self._list_only_fields,
-                    "category__name",
-                    "category__slug",
-                    "subcategory__name",
-                    "subcategory__slug",
+                queryset = (
+                    queryset.annotate(primary_image_url=Subquery(primary_image_subquery))
+                    .only(
+                        *self._list_only_fields,
+                        "category__name",
+                        "category__slug",
+                        "subcategory__name",
+                        "subcategory__slug",
+                    )
                 )
         is_admin_request = bool(self.request.user and self.request.user.is_authenticated and self.request.user.is_staff)
         if not is_admin_request:
