@@ -100,9 +100,9 @@ PRODUCT_DETAIL_CACHE_TTL = int(os.getenv("PRODUCT_DETAIL_CACHE_TTL", "300"))
 CATEGORY_FILTER_CACHE_TTL = int(os.getenv("CATEGORY_FILTER_CACHE_TTL", "300"))
 
 
-def _has_shared_cache_backend() -> bool:
+def _has_usable_cache_backend() -> bool:
     backend = str((settings.CACHES.get("default") or {}).get("BACKEND", "")).strip()
-    return backend == "django_redis.cache.RedisCache"
+    return bool(backend) and backend != "django.core.cache.backends.dummy.DummyCache"
 
 
 def _wants_empty_success_response(request) -> bool:
@@ -1310,7 +1310,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             request.method == "GET"
             and not is_admin_request
             and PRODUCT_LIST_CACHE_TTL > 0
-            and _has_shared_cache_backend()
+            and _has_usable_cache_backend()
         )
         if not can_cache:
             return super().list(request, *args, **kwargs)
@@ -1332,7 +1332,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             request.method == "GET"
             and not is_admin_request
             and PRODUCT_DETAIL_CACHE_TTL > 0
-            and _has_shared_cache_backend()
+            and _has_usable_cache_backend()
         )
         if not can_cache:
             return super().retrieve(request, *args, **kwargs)

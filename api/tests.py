@@ -2037,7 +2037,7 @@ class ProductImageOrderTests(TestCase):
     }
 )
 class ProductListCachingTests(TestCase):
-    def test_public_product_list_skips_cache_when_backend_is_not_shared(self):
+    def test_public_product_list_uses_cache_when_backend_is_available(self):
         category = Category.objects.create(name="Beds", slug="beds-no-shared-cache", sort_order=1)
         Product.objects.create(
             name="Cache Fresh Bed",
@@ -2048,13 +2048,13 @@ class ProductListCachingTests(TestCase):
             description="Long",
         )
 
-        with patch("api.views.cache.get") as mock_cache_get, patch("api.views.cache.set") as mock_cache_set:
+        with patch("api.views.cache.get", return_value=None) as mock_cache_get, patch("api.views.cache.set") as mock_cache_set:
             response = APIClient().get("/api/products/?summary=1")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data), 1)
-        mock_cache_get.assert_not_called()
-        mock_cache_set.assert_not_called()
+        mock_cache_get.assert_called_once()
+        mock_cache_set.assert_called_once()
 
     def test_admin_product_update_can_return_no_content(self):
         admin_user = User.objects.create_user(
