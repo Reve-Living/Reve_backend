@@ -34,6 +34,38 @@ def _clean_stripe_key(value: str) -> str:
         return ""
     return "".join(value.split())
 
+
+def _normalize_postgres_option(value: str, allowed: set[str], default: str) -> str:
+    cleaned = str(value or "").strip().lower()
+    return cleaned if cleaned in allowed else default
+
+
+def _parse_database_url_options(query: dict) -> dict[str, str]:
+    valid_sslmodes = {"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
+    valid_channel_binding = {"disable", "prefer", "require"}
+
+    raw_sslmode = str(query.get("sslmode", ["require"])[0] or "require").strip().lower()
+    raw_channel_binding = str(query.get("channel_binding", [""])[0] or "").strip().lower()
+
+    # Recover from malformed URLs like:
+    # ?channel_binding=requiresslmode=require
+    if "sslmode=" in raw_channel_binding:
+        channel_prefix, _, ssl_suffix = raw_channel_binding.partition("sslmode=")
+        recovered_channel_binding = channel_prefix.rstrip("&?").strip()
+        recovered_sslmode = ssl_suffix.lstrip("=&?").strip()
+        if recovered_channel_binding:
+            raw_channel_binding = recovered_channel_binding
+        if recovered_sslmode:
+            raw_sslmode = recovered_sslmode
+
+    sslmode = _normalize_postgres_option(raw_sslmode, valid_sslmodes, "require")
+    channel_binding = _normalize_postgres_option(raw_channel_binding, valid_channel_binding, "")
+
+    options = {"sslmode": sslmode}
+    if channel_binding:
+        options["channel_binding"] = channel_binding
+    return options
+
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-reve-living-crafted-comforts")
 
@@ -102,12 +134,7 @@ if not DATABASE_URL:
 
 parsed = urlparse(DATABASE_URL)
 query = parse_qs(parsed.query)
-sslmode = query.get("sslmode", ["require"])[0]
-channel_binding = query.get("channel_binding", [None])[0]
-
-db_options = {"sslmode": sslmode}
-if channel_binding:
-    db_options["channel_binding"] = channel_binding
+db_options = _parse_database_url_options(query)
 db_options["connect_timeout"] = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
 # Do NOT set connection options; Neon pooler rejects statement_timeout in startup parameters.
 
