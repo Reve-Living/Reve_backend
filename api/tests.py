@@ -1962,6 +1962,24 @@ class ProductImageOrderTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data), 2)
 
+    def test_product_summary_limit_supports_offset(self):
+        category = Category.objects.create(name="Beds", slug="beds-summary-offset", sort_order=1)
+        for index in range(4):
+            Product.objects.create(
+                name=f"Offset Bed {index}",
+                slug=f"offset-bed-{index}",
+                category=category,
+                price="599.99",
+                short_description="Short",
+                description="Long",
+                sort_order=index,
+            )
+
+        response = APIClient().get(f"/api/products/?category={category.slug}&summary=1&limit=2&offset=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["slug"] for item in response.data], ["offset-bed-1", "offset-bed-2"])
+
     def test_product_summary_can_include_filter_values_on_demand(self):
         category = Category.objects.create(name="Beds", slug="beds-summary-include-filters", sort_order=1)
         product = Product.objects.create(

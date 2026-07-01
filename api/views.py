@@ -119,6 +119,16 @@ def _positive_int_query_param(request, key, maximum=100):
     return min(value, maximum)
 
 
+def _nonnegative_int_query_param(request, key, maximum=10000):
+    try:
+        value = int(str(request.query_params.get(key) or "").strip())
+    except (TypeError, ValueError):
+        return 0
+    if value <= 0:
+        return 0
+    return min(value, maximum)
+
+
 def _primary_image_subquery():
     return (
         ProductImage.objects.filter(product_id=OuterRef("pk"))
@@ -1336,12 +1346,10 @@ class ProductViewSet(viewsets.ModelViewSet):
             queryset = queryset.order_by("sort_order", "-created_at")
 
         if is_summary:
-            try:
-                limit = int(self.request.query_params.get("limit") or 0)
-            except (TypeError, ValueError):
-                limit = 0
-            if limit > 0:
-                queryset = queryset[: min(limit, 100)]
+            limit = _positive_int_query_param(self.request, "limit", maximum=100)
+            offset = _nonnegative_int_query_param(self.request, "offset")
+            if limit is not None:
+                queryset = queryset[offset : offset + limit]
 
         return queryset
 
