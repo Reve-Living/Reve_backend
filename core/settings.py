@@ -192,14 +192,31 @@ STORAGES = {
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# In-memory cache used by cache_page decorators to speed list endpoints.
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-        "LOCATION": "reve-backend-cache",
-        "TIMEOUT": None,  # per-view cache_page controls TTL
+# Prefer a shared Redis cache in production so repeated public catalog traffic
+# does not fan out to PostgreSQL across app instances. Fall back to in-memory
+# cache locally when REDIS_URL is not configured.
+REDIS_URL = os.getenv("REDIS_URL", "").strip()
+if REDIS_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": REDIS_URL,
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                "IGNORE_EXCEPTIONS": True,
+            },
+            "KEY_PREFIX": os.getenv("CACHE_KEY_PREFIX", "reve"),
+            "TIMEOUT": None,  # per-view and explicit cache.set calls control TTL
+        }
     }
-}
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "reve-backend-cache",
+            "TIMEOUT": None,  # per-view cache_page controls TTL
+        }
+    }
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (

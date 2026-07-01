@@ -1404,6 +1404,54 @@ class OrderItemSerializer(serializers.ModelSerializer):
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
 
+    def validate_reference_images(self, value):
+        if value in (None, ""):
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Reference images must be a list")
+
+        normalized = []
+        for item in value:
+            if isinstance(item, str):
+                url = item.strip()
+            elif isinstance(item, dict):
+                url = str(
+                    item.get("url")
+                    or item.get("publicUrl")
+                    or item.get("publicURL")
+                    or item.get("signedUrl")
+                    or item.get("signedURL")
+                    or ""
+                ).strip()
+            else:
+                raise serializers.ValidationError("Each reference image must be an uploaded image URL")
+
+            if not url:
+                raise serializers.ValidationError("Each reference image needs a URL")
+            if url.startswith("data:"):
+                raise serializers.ValidationError("Please upload reference images before submitting the order")
+
+            parsed = urlparse(url)
+            path = parsed.path or ""
+            if "/orders/reference-images/" not in path:
+                raise serializers.ValidationError("Please upload reference images before submitting the order")
+
+            if parsed.netloc:
+                allowed_hosts = {
+                    urlparse(getattr(settings, "MEDIA_URL", "")).netloc,
+                    getattr(settings, "AWS_S3_CUSTOM_DOMAIN", ""),
+                }
+                request = self.context.get("request")
+                if request:
+                    allowed_hosts.add(request.get_host())
+
+                if parsed.netloc not in {host for host in allowed_hosts if host}:
+                    raise serializers.ValidationError("Please upload reference images before submitting the order")
+
+            normalized.append(url)
+
+        return normalized
+
     class Meta:
         model = Order
         fields = "__all__"

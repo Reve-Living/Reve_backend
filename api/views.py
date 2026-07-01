@@ -94,6 +94,9 @@ from .payments import (
 
 
 TWOPLACES = Decimal("0.01")
+PRODUCT_LIST_CACHE_TTL = int(os.getenv("PRODUCT_LIST_CACHE_TTL", "300"))
+PRODUCT_DETAIL_CACHE_TTL = int(os.getenv("PRODUCT_DETAIL_CACHE_TTL", "300"))
+CATEGORY_FILTER_CACHE_TTL = int(os.getenv("CATEGORY_FILTER_CACHE_TTL", "300"))
 
 
 def _with_live_review_summary(queryset):
@@ -1194,7 +1197,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         response = super().list(request, *args, **kwargs)
         if response.status_code == status.HTTP_200_OK:
-            cache.set(cache_key, response.data, 60 * 2)
+            cache.set(cache_key, response.data, PRODUCT_LIST_CACHE_TTL)
         return response
 
     def retrieve(self, request, *args, **kwargs):
@@ -1210,7 +1213,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         response = super().retrieve(request, *args, **kwargs)
         if response.status_code == status.HTTP_200_OK:
-            cache.set(cache_key, response.data, 60 * 2)
+            cache.set(cache_key, response.data, PRODUCT_DETAIL_CACHE_TTL)
         return response
 
     def create(self, request, *args, **kwargs):
@@ -2230,9 +2233,12 @@ class PromotionViewSet(viewsets.ModelViewSet):
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all().prefetch_related("items__product").order_by("-created_at")
     serializer_class = OrderSerializer
+    ORDER_REFERENCE_IMAGE_MAX_SIZE = int(
+        getattr(settings, "ORDER_REFERENCE_IMAGE_MAX_UPLOAD_SIZE", 10 * 1024 * 1024)
+    )
 
     def get_permissions(self):
-        if self.action in ("create", "lookup"):
+        if self.action in ("create", "lookup", "upload_reference_image"):
             return [AllowAny()]
         if self.action == "mark_paid":
             if self.request.user.is_staff:
@@ -2622,6 +2628,31 @@ class OrderViewSet(viewsets.ModelViewSet):
                 assembly_service_price=item.get("assembly_service_price", 0),
             )
 
+    def _build_order_reference_image_response(self, request, file_obj):
+        content_type = str(getattr(file_obj, "content_type", "") or "").lower()
+        if not content_type.startswith("image/"):
+            raise ValidationError({"file": "Only image uploads are allowed"})
+        if getattr(file_obj, "size", 0) > self.ORDER_REFERENCE_IMAGE_MAX_SIZE:
+            raise ValidationError({"file": "Reference images must be 10MB or smaller"})
+
+        base_name, ext = os.path.splitext(file_obj.name or "")
+        if not ext:
+            ext = ".jpg"
+        safe_base = slugify(base_name) or "reference-image"
+        file_name = f"orders/reference-images/{uuid.uuid4().hex}-{safe_base}{ext.lower()}"
+        saved_path = default_storage.save(file_name, file_obj)
+        stored_url = default_storage.url(saved_path)
+        absolute_url = (
+            stored_url
+            if str(stored_url).startswith(("http://", "https://"))
+            else request.build_absolute_uri(stored_url)
+        )
+        return {
+            "url": absolute_url,
+            "name": file_obj.name or "",
+            "mime_type": content_type,
+        }
+
     def create(self, request, *args, **kwargs):
         data = request.data.copy()
         items = data.pop("items", [])
@@ -2679,6 +2710,13 @@ class OrderViewSet(viewsets.ModelViewSet):
     def partial_update(self, request, *args, **kwargs):
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
+
+    @action(detail=False, methods=["post"], permission_classes=[AllowAny], url_path="upload_reference_image")
+    def upload_reference_image(self, request):
+        file_obj = request.FILES.get("file")
+        if not file_obj:
+            raise ValidationError({"file": "An image file is required"})
+        return Response(self._build_order_reference_image_response(request, file_obj), status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"])
     def lookup(self, request):
@@ -3174,7 +3212,7 @@ class CategoryFiltersView(generics.GenericAPIView):
     """
     permission_classes = [AllowAny]
     
-    @method_decorator(cache_page(60 * 2))
+    @method_decorator(cache_page(CATEGORY_FILTER_CACHE_TTL))
     def get(self, request, category_slug):
         from django.db.models import Q, Count
         

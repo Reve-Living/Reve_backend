@@ -33,10 +33,22 @@ from .models import (
     EMAIL_HOST="smtp.hostinger.com",
     DEFAULT_FROM_EMAIL="info@reveliving.co.uk",
     ORDER_NOTIFICATION_EMAIL="info@reveliving.co.uk",
+    MEDIA_ROOT=tempfile.mkdtemp(),
+    MEDIA_URL="/media/",
+    STORAGES={
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    },
 )
 class OrderEmailTests(TestCase):
     def test_cash_on_delivery_order_creation_sends_customer_and_admin_emails(self):
         client = APIClient()
+        upload_response = client.post(
+            "/api/orders/upload_reference_image/",
+            {"file": SimpleUploadedFile("customer-photo.jpg", b"image-bytes", content_type="image/jpeg")},
+            format="multipart",
+        )
+        self.assertEqual(upload_response.status_code, 201)
         payload = {
             "first_name": "Ayesha",
             "last_name": "Jahangir",
@@ -54,9 +66,7 @@ class OrderEmailTests(TestCase):
             "status": "paid",
             "send_confirmation_email": False,
             "special_notes": "Please call before delivery.",
-            "reference_images": [
-                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn4nVQAAAAASUVORK5CYII="
-            ],
+            "reference_images": [upload_response.data["url"]],
             "items": [
                 {
                     "quantity": 2,
@@ -97,7 +107,8 @@ class OrderEmailTests(TestCase):
         self.assertIn("Assembly Service: £49.00", customer_email.body)
         self.assertIn("Email: support@reveliving.co.uk", customer_email.body)
         self.assertIn("Phone: +44 7386 340475", customer_email.body)
-        self.assertEqual(len(customer_email.attachments), 1)
+        self.assertEqual(response.data["reference_images"], [upload_response.data["url"]])
+        self.assertEqual(len(customer_email.attachments), 0)
         self.assertTrue(response.data["confirmation_email_sent_at"])
 
         order_item = response.data["items"][0]
@@ -283,6 +294,34 @@ class OrderEmailTests(TestCase):
         self.assertEqual(lookup_response.status_code, 200)
         self.assertEqual(lookup_response.data["id"], create_response.data["id"])
         self.assertEqual(lookup_response.data["email"], "lookup@example.com")
+
+    def test_public_order_rejects_embedded_reference_image_payloads(self):
+        client = APIClient()
+        payload = {
+            "first_name": "Inline",
+            "last_name": "Image",
+            "email": "inline-image@example.com",
+            "phone": "+44 1010 101010",
+            "address": "10 Inline Road",
+            "city": "London",
+            "postal_code": "E1 1AA",
+            "delivery_charges": "0.00",
+            "payment_method": "cod",
+            "reference_images": [
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn4nVQAAAAASUVORK5CYII="
+            ],
+            "items": [
+                {
+                    "quantity": 1,
+                    "price": "199.99",
+                }
+            ],
+        }
+
+        response = client.post("/api/orders/", payload, format="json")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Please upload reference images", str(response.data["reference_images"]))
 
     @patch("api.views.get_stripe_payment_details")
     def test_public_mark_paid_allows_matching_email(self, mock_get_stripe_payment_details):
