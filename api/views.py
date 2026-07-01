@@ -11,7 +11,7 @@ from django.core.files.base import ContentFile
 from django.contrib.auth.models import User
 from django.utils.text import slugify
 from django.db import transaction
-from django.db.models import Avg, Count, IntegerField, OuterRef, Prefetch, Q, Subquery, Case, When, Value
+from django.db.models import Avg, Count, DecimalField, IntegerField, OuterRef, Prefetch, Q, Subquery, Case, When, Value
 from django.core.cache import cache
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
@@ -114,6 +114,20 @@ def _primary_image_subquery():
         ProductImage.objects.filter(product_id=OuterRef("pk"))
         .order_by("sort_order", "id")
         .values("url")[:1]
+    )
+
+
+def _min_size_price_subquery():
+    return ProductSize.objects.filter(product_id=OuterRef("pk")).order_by("price_delta").values("price_delta")[:1]
+
+
+def _size_count_subquery():
+    return (
+        ProductSize.objects.filter(product_id=OuterRef("pk"))
+        .order_by()
+        .values("product_id")
+        .annotate(total=Count("id"))
+        .values("total")[:1]
     )
 
 
@@ -1079,7 +1093,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         "styles",
         queryset=ProductStyle.objects.only("id", "product_id", "name", "options").order_by("id"),
     )
-    _summary_base_prefetches = [_size_list_prefetch]
+    _summary_base_prefetches = []
     _summary_filter_prefetches = [_filter_values_list_prefetch]
     _summary_variant_prefetches = [_summary_color_prefetch, _summary_style_prefetch]
     _list_prefetches = [_size_list_prefetch, _filter_values_list_prefetch]
@@ -1186,6 +1200,13 @@ class ProductViewSet(viewsets.ModelViewSet):
             and self.request.query_params.get("include_variants") in ("1", "true", "True")
         )
 
+    def _summary_includes_sizes(self):
+        return (
+            self.action == "list"
+            and self.request.query_params.get("summary") in ("1", "true", "True")
+            and self.request.query_params.get("include_sizes") in ("1", "true", "True")
+        )
+
     def get_serializer_class(self):
         if self._is_admin_summary_request():
             return ProductAdminListSerializer
@@ -1204,6 +1225,8 @@ class ProductViewSet(viewsets.ModelViewSet):
         is_admin_summary = self._is_admin_summary_request()
         is_summary = is_list and self.request.query_params.get("summary") in ("1", "true", "True")
         primary_image_subquery = _primary_image_subquery()
+        min_size_price_subquery = _min_size_price_subquery()
+        size_count_subquery = _size_count_subquery()
         if is_admin_summary:
             queryset = (
                 Product.objects.select_related("category", "subcategory")
@@ -1217,6 +1240,8 @@ class ProductViewSet(viewsets.ModelViewSet):
             )
         elif is_summary:
             summary_prefetches = list(self._summary_base_prefetches)
+            if self._summary_includes_sizes():
+                summary_prefetches.append(self._size_list_prefetch)
             if self._summary_includes_filters():
                 summary_prefetches.extend(self._summary_filter_prefetches)
             if self._summary_includes_variants():
@@ -1224,7 +1249,11 @@ class ProductViewSet(viewsets.ModelViewSet):
             queryset = (
                 self._base_queryset()
                 .prefetch_related(*summary_prefetches)
-                .annotate(primary_image_url=Subquery(primary_image_subquery))
+                .annotate(
+                    primary_image_url=Subquery(primary_image_subquery),
+                    min_size_price=Subquery(min_size_price_subquery, output_field=DecimalField(max_digits=10, decimal_places=2)),
+                    size_count=Subquery(size_count_subquery, output_field=IntegerField()),
+                )
                 .only(*self._summary_only_fields, "category__name", "category__slug", "subcategory__name", "subcategory__slug")
             )
         else:

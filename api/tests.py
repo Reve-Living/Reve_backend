@@ -1,4 +1,5 @@
 from django.core import mail
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.contrib.auth.models import User
@@ -1808,6 +1809,9 @@ class ProductStockStatusTests(TestCase):
 
 
 class ProductImageOrderTests(TestCase):
+    def setUp(self):
+        cache.clear()
+
     def test_product_update_preserves_image_sort_order(self):
         admin_user = User.objects.create_user(
             username="admin-image-order",
@@ -1901,6 +1905,44 @@ class ProductImageOrderTests(TestCase):
         self.assertNotIn("colors", response.data[0])
         self.assertNotIn("styles", response.data[0])
         self.assertNotIn("filter_values", response.data[0])
+        self.assertNotIn("sizes", response.data[0])
+
+    def test_product_summary_exposes_size_summary_without_full_sizes_by_default(self):
+        category = Category.objects.create(name="Beds", slug="beds-summary-size-summary", sort_order=1)
+        product = Product.objects.create(
+            name="Size Summary Bed",
+            slug="size-summary-bed",
+            category=category,
+            price="599.99",
+            short_description="Short",
+            description="Long",
+        )
+        ProductSize.objects.create(product=product, name="3ft Single", price_delta="399.99")
+        ProductSize.objects.create(product=product, name="5ft King", price_delta="699.99")
+
+        response = APIClient().get("/api/products/?summary=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("sizes", response.data[0])
+        self.assertEqual(response.data[0]["min_size_price"], "399.99")
+        self.assertEqual(response.data[0]["size_count"], 2)
+
+    def test_product_summary_can_include_sizes_on_demand(self):
+        category = Category.objects.create(name="Beds", slug="beds-summary-include-sizes", sort_order=1)
+        product = Product.objects.create(
+            name="Size Filter Bed",
+            slug="size-filter-bed",
+            category=category,
+            price="599.99",
+            short_description="Short",
+            description="Long",
+        )
+        size = ProductSize.objects.create(product=product, name="3ft Single", price_delta="399.99")
+
+        response = APIClient().get("/api/products/?summary=1&include_sizes=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data[0]["sizes"][0]["id"], size.id)
 
     def test_product_summary_can_include_filter_values_on_demand(self):
         category = Category.objects.create(name="Beds", slug="beds-summary-include-filters", sort_order=1)

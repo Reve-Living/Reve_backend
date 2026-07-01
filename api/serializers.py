@@ -831,6 +831,8 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
     images = serializers.SerializerMethodField()
     price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     original_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    min_size_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True, allow_null=True)
+    size_count = serializers.IntegerField(read_only=True, allow_null=True)
     short_description = serializers.CharField(read_only=True)
     sizes = ProductSizeSerializer(many=True, read_only=True)
     colors = ProductSummaryColorSerializer(many=True, read_only=True)
@@ -855,6 +857,9 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
         fields = super().get_fields()
         include_filters = self._query_flag("include_filters")
         include_variants = self._query_flag("include_variants")
+        include_sizes = self._query_flag("include_sizes")
+        if not include_sizes:
+            fields.pop("sizes", None)
         if not include_filters:
             fields.pop("filter_values", None)
         if not include_variants:
@@ -897,6 +902,8 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
             "subcategory",
             "price",
             "original_price",
+            "min_size_price",
+            "size_count",
             "stock_status",
             "in_stock",
             "is_hidden",
