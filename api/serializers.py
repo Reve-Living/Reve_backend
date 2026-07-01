@@ -52,6 +52,28 @@ class ProductReviewSummaryMixin:
         return int(value or 0)
 
 
+def _get_first_related_item(obj, relation_name):
+    prefetched_cache = getattr(obj, "_prefetched_objects_cache", {}) or {}
+    prefetched_items = prefetched_cache.get(relation_name)
+    if prefetched_items is not None:
+        return next(iter(prefetched_items), None)
+
+    relation = getattr(obj, relation_name, None)
+    if relation is None:
+        return None
+
+    try:
+        return next(iter(relation), None)
+    except TypeError:
+        pass
+
+    all_method = getattr(relation, "all", None)
+    if callable(all_method):
+        return all_method().first()
+
+    return None
+
+
 def _subcategory_links_to_category(subcategory, category) -> bool:
     if not subcategory or not category:
         return False
@@ -758,20 +780,18 @@ class ProductListSerializer(ProductReviewSummaryMixin, serializers.ModelSerializ
                 many=True,
             ).data
 
-        prefetched = getattr(obj, "images", None)
-        if prefetched:
-            image = next(iter(prefetched), None)
-            if image and getattr(image, "url", ""):
-                return ProductListImageSerializer(
-                    [
-                        {
-                            "id": int(getattr(image, "id", 0) or 0),
-                            "url": image.url,
-                            "alt_text": getattr(image, "alt_text", "") or obj.name or "",
-                        }
-                    ],
-                    many=True,
-                ).data
+        image = _get_first_related_item(obj, "images")
+        if image and getattr(image, "url", ""):
+            return ProductListImageSerializer(
+                [
+                    {
+                        "id": int(getattr(image, "id", 0) or 0),
+                        "url": image.url,
+                        "alt_text": getattr(image, "alt_text", "") or obj.name or "",
+                    }
+                ],
+                many=True,
+            ).data
         return []
 
     def get_filter_values(self, obj):
@@ -815,20 +835,18 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
                 many=True,
             ).data
 
-        prefetched = getattr(obj, "images", None)
-        if prefetched:
-            image = next(iter(prefetched), None)
-            if image and getattr(image, "url", ""):
-                return ProductListImageSerializer(
-                    [
-                        {
-                            "id": int(getattr(image, "id", 0) or 0),
-                            "url": image.url,
-                            "alt_text": getattr(image, "alt_text", "") or obj.name or "",
-                        }
-                    ],
-                    many=True,
-                ).data
+        image = _get_first_related_item(obj, "images")
+        if image and getattr(image, "url", ""):
+            return ProductListImageSerializer(
+                [
+                    {
+                        "id": int(getattr(image, "id", 0) or 0),
+                        "url": image.url,
+                        "alt_text": getattr(image, "alt_text", "") or obj.name or "",
+                    }
+                ],
+                many=True,
+            ).data
         return []
 
     class Meta:

@@ -1808,6 +1808,23 @@ class ProductStockStatusTests(TestCase):
 
 
 class ProductImageOrderTests(TestCase):
+    def test_product_summary_handles_products_without_images(self):
+        category = Category.objects.create(name="Beds", slug="beds-summary-no-images", sort_order=1)
+        product = Product.objects.create(
+            name="Image Free Bed",
+            slug="image-free-bed",
+            category=category,
+            price="499.99",
+            short_description="Short",
+            description="Long",
+        )
+
+        response = APIClient().get("/api/products/?summary=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["id"] for item in response.data], [product.id])
+        self.assertEqual(response.data[0]["images"], [])
+
     def test_product_images_are_returned_in_sort_order(self):
         category = Category.objects.create(name="Beds", slug="beds-images-order", sort_order=1)
         product = Product.objects.create(
