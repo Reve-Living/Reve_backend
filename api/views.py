@@ -3419,6 +3419,18 @@ class FilterOptionViewSet(viewsets.ModelViewSet):
     serializer_class = FilterOptionSerializer
     permission_classes = [IsAdminOrReadOnly]
 
+    def perform_create(self, serializer):
+        serializer.save()
+        cache.clear()
+
+    def perform_update(self, serializer):
+        serializer.save()
+        cache.clear()
+
+    def perform_destroy(self, instance):
+        instance.delete()
+        cache.clear()
+
 
 class DimensionTemplateViewSet(viewsets.ModelViewSet):
     queryset = DimensionTemplate.objects.all().order_by("name")
@@ -3457,6 +3469,15 @@ class CategoryFilterViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save()
+        cache.clear()
+
+    def perform_update(self, serializer):
+        serializer.save()
+        cache.clear()
+
+    def perform_destroy(self, instance):
+        instance.delete()
+        cache.clear()
 
 
 class CategoryFiltersView(generics.GenericAPIView):
@@ -3498,7 +3519,11 @@ class CategoryFiltersView(generics.GenericAPIView):
             category_filters = category_filters.filter(Q(subcategory=subcategory) | Q(category=category))
 
         category_filters = category_filters.select_related('filter_type').prefetch_related(
-            'filter_type__options'
+            Prefetch(
+                'filter_type__options',
+                queryset=FilterOption.objects.filter(is_active=True).order_by('display_order', 'name'),
+                to_attr='active_options',
+            )
         ).order_by('display_order')
         
         # Collect unique filter types
@@ -3507,6 +3532,7 @@ class CategoryFiltersView(generics.GenericAPIView):
         for cf in category_filters:
             ft = cf.filter_type
             if ft.is_active and ft.id not in seen_ids:
+                ft.category_option_order = list(cf.option_order or [])
                 filter_types.append(ft)
                 seen_ids.add(ft.id)
 
@@ -3523,7 +3549,8 @@ class CategoryFiltersView(generics.GenericAPIView):
         
         # Attach counts without extra queries
         for ft in filter_types:
-            for option in ft.options.filter(is_active=True):
+            options = ft.active_options if hasattr(ft, "active_options") else ft.options.filter(is_active=True)
+            for option in options:
                 option.product_count = count_lookup.get(option.id, 0)
         
         serializer = FilterTypeSerializer(filter_types, many=True)

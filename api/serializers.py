@@ -1817,7 +1817,10 @@ class FilterOptionSerializer(serializers.ModelSerializer):
             'filter_type',
             'filter_type_id',
             'filter_type_name',
+            'value',
             'color_code',
+            'display_order',
+            'is_active',
             'icon_url',
             'price_delta',
             'is_wingback',
@@ -1853,11 +1856,26 @@ class FilterOptionSerializer(serializers.ModelSerializer):
 
 
 class FilterTypeSerializer(serializers.ModelSerializer):
-    options = FilterOptionSerializer(many=True, read_only=True)
+    options = serializers.SerializerMethodField()
     
     class Meta:
         model = FilterType
         fields = ['id', 'name', 'slug', 'display_type', 'icon_url', 'display_hint', 'is_default', 'is_expanded_by_default', 'options']
+
+    def get_options(self, obj):
+        options = list(obj.active_options) if hasattr(obj, "active_options") else list(obj.options.all())
+        category_order = getattr(obj, "category_option_order", None)
+        if category_order is not None:
+            order_lookup = {option_id: index for index, option_id in enumerate(category_order)}
+            options.sort(
+                key=lambda option: (
+                    0 if option.id in order_lookup else 1,
+                    order_lookup.get(option.id, option.display_order),
+                    option.display_order,
+                    option.name.lower(),
+                )
+            )
+        return FilterOptionSerializer(options, many=True, context=self.context).data
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -1893,11 +1911,35 @@ class CategoryFilterSerializer(serializers.ModelSerializer):
             "subcategory",
             "filter_type",
             "display_order",
+            "option_order",
             "is_active",
             "category_name",
             "subcategory_name",
             "filter_type_name",
         )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if "option_order" not in attrs:
+            return attrs
+
+        filter_type = attrs.get("filter_type") or getattr(self.instance, "filter_type", None)
+        normalized = []
+        for raw_id in attrs.get("option_order") or []:
+            try:
+                option_id = int(raw_id)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError({"option_order": "Option IDs must be numbers."})
+            if option_id > 0 and option_id not in normalized:
+                normalized.append(option_id)
+
+        valid_ids = set(
+            FilterOption.objects.filter(filter_type=filter_type, id__in=normalized).values_list("id", flat=True)
+        )
+        if len(valid_ids) != len(normalized):
+            raise serializers.ValidationError({"option_order": "Every option must belong to this filter type."})
+        attrs["option_order"] = normalized
+        return attrs
 
 
 class ProductFilterValueSerializer(serializers.ModelSerializer):

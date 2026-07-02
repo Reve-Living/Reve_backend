@@ -639,6 +639,7 @@ class CategoryFilter(models.Model):
     )
     filter_type = models.ForeignKey(FilterType, on_delete=models.CASCADE)
     display_order = models.PositiveIntegerField(default=0)  # Order within this category
+    option_order = models.JSONField(default=list, blank=True)  # FilterOption IDs in category-specific order
     is_active = models.BooleanField(default=True)
     
     class Meta:

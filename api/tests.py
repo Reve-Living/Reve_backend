@@ -3123,3 +3123,67 @@ class GoogleMerchantFeedTests(TestCase):
         self.assertIn("<g:price>169.00 GBP</g:price>", xml)
         self.assertNotIn("Milano Super Orthopaedic Mattress - 3ft Single", xml)
         self.assertNotIn("<g:price>338.00 GBP</g:price>", xml)
+
+
+class CategoryFilterOptionOrderTests(TestCase):
+    def setUp(self):
+        cache.clear()
+
+    def test_category_filter_options_follow_category_specific_order(self):
+        category = Category.objects.create(name="Dining", slug="dining-filter-option-order")
+        filter_type = FilterType.objects.create(name="Seats", slug="seats-filter-option-order")
+        two = FilterOption.objects.create(
+            filter_type=filter_type,
+            name="2 Seater",
+            slug="two-seater-filter-option-order",
+            display_order=1,
+        )
+        four = FilterOption.objects.create(
+            filter_type=filter_type,
+            name="4 Seater",
+            slug="four-seater-filter-option-order",
+            display_order=2,
+        )
+        six = FilterOption.objects.create(
+            filter_type=filter_type,
+            name="6 Seater",
+            slug="six-seater-filter-option-order",
+            display_order=3,
+        )
+        CategoryFilter.objects.create(
+            category=category,
+            filter_type=filter_type,
+            option_order=[six.id, two.id, four.id],
+        )
+
+        response = APIClient().get(f"/api/categories/{category.slug}/filters/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [option["id"] for option in response.data["filters"][0]["options"]],
+            [six.id, two.id, four.id],
+        )
+
+    def test_category_filter_rejects_options_from_another_filter_type(self):
+        user = User.objects.create_user(username="filter-admin", password="password", is_staff=True)
+        category = Category.objects.create(name="Beds", slug="beds-filter-option-validation")
+        filter_type = FilterType.objects.create(name="Size", slug="size-filter-option-validation")
+        other_type = FilterType.objects.create(name="Colour", slug="colour-filter-option-validation")
+        foreign_option = FilterOption.objects.create(
+            filter_type=other_type,
+            name="Cream",
+            slug="cream-filter-option-validation",
+        )
+        category_filter = CategoryFilter.objects.create(category=category, filter_type=filter_type)
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        response = client.patch(
+            f"/api/category-filters/{category_filter.id}/",
+            {"option_order": [foreign_option.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        category_filter.refresh_from_db()
+        self.assertEqual(category_filter.option_order, [])
