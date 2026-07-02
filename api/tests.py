@@ -1980,6 +1980,25 @@ class ProductImageOrderTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual([item["slug"] for item in response.data], ["offset-bed-1", "offset-bed-2"])
 
+    def test_product_core_detail_omits_expensive_optional_fields(self):
+        category = Category.objects.create(name="Beds", slug="beds-core-detail", sort_order=1)
+        product = Product.objects.create(
+            name="Core Detail Bed",
+            slug="core-detail-bed",
+            category=category,
+            price="599.99",
+            short_description="Short",
+            description="Long",
+        )
+
+        response = APIClient().get(f"/api/products/{product.id}/?core=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["id"], product.id)
+        self.assertIn("description", response.data)
+        self.assertNotIn("mattresses", response.data)
+        self.assertNotIn("suggested_products_data", response.data)
+
     def test_product_summary_can_include_filter_values_on_demand(self):
         category = Category.objects.create(name="Beds", slug="beds-summary-include-filters", sort_order=1)
         product = Product.objects.create(

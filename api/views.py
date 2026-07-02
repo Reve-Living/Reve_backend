@@ -1117,6 +1117,16 @@ class ProductViewSet(viewsets.ModelViewSet):
     _summary_filter_prefetches = [_filter_values_list_prefetch]
     _summary_variant_prefetches = [_summary_color_prefetch, _summary_style_prefetch]
     _list_prefetches = [_size_list_prefetch, _filter_values_list_prefetch]
+    _core_detail_prefetches = [
+        "images",
+        _size_list_prefetch,
+        _filter_values_list_prefetch,
+        "videos",
+        "colors",
+        "styles",
+        "fabrics",
+        "dimension_template_link__template__rows",
+    ]
     _detail_prefetches = ["images"] + _list_prefetches + [
         "videos",
         "colors",
@@ -1227,6 +1237,9 @@ class ProductViewSet(viewsets.ModelViewSet):
             and self.request.query_params.get("include_sizes") in ("1", "true", "True")
         )
 
+    def _is_core_detail_request(self):
+        return self.request.query_params.get("core") in ("1", "true", "True")
+
     def get_serializer_class(self):
         if self._is_admin_summary_request():
             return ProductAdminListSerializer
@@ -1277,7 +1290,9 @@ class ProductViewSet(viewsets.ModelViewSet):
                 .only(*self._summary_only_fields, "category__name", "category__slug", "subcategory__name", "subcategory__slug")
             )
         else:
-            prefetches = self._list_prefetches if is_list else self._detail_prefetches
+            prefetches = self._list_prefetches if is_list else (
+                self._core_detail_prefetches if self._is_core_detail_request() else self._detail_prefetches
+            )
             queryset = self._base_queryset().prefetch_related(*prefetches)
             if is_list:
                 queryset = (
