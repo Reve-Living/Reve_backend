@@ -59,6 +59,7 @@ from .serializers import (
     CategorySerializer,
     SubCategorySerializer,
     ProductSerializer,
+    ProductQuickSerializer,
     ProductSummarySerializer,
     ProductAdminListSerializer,
     ProductWriteSerializer,
@@ -1120,8 +1121,6 @@ class ProductViewSet(viewsets.ModelViewSet):
     _core_detail_prefetches = [
         "images",
         _size_list_prefetch,
-        _filter_values_list_prefetch,
-        "videos",
         "colors",
         "styles",
         "fabrics",
@@ -1182,6 +1181,13 @@ class ProductViewSet(viewsets.ModelViewSet):
         "price",
         "original_price",
         "short_description",
+        "description",
+        "features",
+        "dimensions",
+        "dimension_paragraph",
+        "dimension_note",
+        "dimension_images",
+        "show_dimensions_table",
         "stock_status",
         "in_stock",
         "is_hidden",
@@ -1240,7 +1246,12 @@ class ProductViewSet(viewsets.ModelViewSet):
     def _is_core_detail_request(self):
         return self.request.query_params.get("core") in ("1", "true", "True")
 
+    def _is_quick_detail_request(self):
+        return self.request.query_params.get("quick") in ("1", "true", "True")
+
     def get_serializer_class(self):
+        if self._is_quick_detail_request():
+            return ProductQuickSerializer
         if self._is_admin_summary_request():
             return ProductAdminListSerializer
         if self.action == "list" and self.request.query_params.get("summary") in ("1", "true", "True"):
@@ -1290,10 +1301,15 @@ class ProductViewSet(viewsets.ModelViewSet):
                 .only(*self._summary_only_fields, "category__name", "category__slug", "subcategory__name", "subcategory__slug")
             )
         else:
-            prefetches = self._list_prefetches if is_list else (
-                self._core_detail_prefetches if self._is_core_detail_request() else self._detail_prefetches
-            )
+            if self._is_quick_detail_request():
+                prefetches = []
+            else:
+                prefetches = self._list_prefetches if is_list else (
+                    self._core_detail_prefetches if self._is_core_detail_request() else self._detail_prefetches
+                )
             queryset = self._base_queryset().prefetch_related(*prefetches)
+            if self._is_quick_detail_request():
+                queryset = queryset.annotate(primary_image_url=Subquery(primary_image_subquery))
             if is_list:
                 queryset = (
                     queryset.annotate(primary_image_url=Subquery(primary_image_subquery))
@@ -1424,7 +1440,8 @@ class ProductViewSet(viewsets.ModelViewSet):
         if not can_cache:
             return super().retrieve(request, *args, **kwargs)
 
-        cache_key = f"product-detail:v2:{kwargs.get(self.lookup_field or 'pk')}"
+        response_kind = "quick" if self._is_quick_detail_request() else "core" if self._is_core_detail_request() else "full"
+        cache_key = f"product-detail:v3:{response_kind}:{kwargs.get(self.lookup_field or 'pk')}"
         cached_data = cache.get(cache_key)
         if cached_data is not None:
             return Response(cached_data)

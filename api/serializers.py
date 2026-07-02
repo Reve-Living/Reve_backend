@@ -523,8 +523,11 @@ class ProductSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
     def get_fields(self):
         fields = super().get_fields()
         if self._query_flag("core"):
+            fields.pop("suggested_products", None)
             fields.pop("suggested_products_data", None)
             fields.pop("mattresses", None)
+            fields.pop("filters", None)
+            fields.pop("videos", None)
         return fields
 
     class Meta:
@@ -760,6 +763,75 @@ class ProductSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
         return 4  # requirement: wingback headboard adds approx 4 cm width
 
 
+class ProductQuickSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
+    """Single-query product content used for an immediate product-page paint."""
+
+    images = serializers.SerializerMethodField()
+    category_name = serializers.ReadOnlyField(source="category.name")
+    subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
+    category_slug = serializers.ReadOnlyField(source="category.slug")
+    subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
+    stock_status = serializers.CharField(read_only=True)
+    rating = serializers.SerializerMethodField()
+    review_count = serializers.SerializerMethodField()
+
+    def get_images(self, obj):
+        primary_url = str(getattr(obj, "primary_image_url", "") or "").strip()
+        if not primary_url:
+            return []
+        return ProductListImageSerializer(
+            [{"id": 0, "url": primary_url, "alt_text": obj.name or ""}],
+            many=True,
+        ).data
+
+    class Meta:
+        model = Product
+        fields = (
+            "id",
+            "name",
+            "slug",
+            "meta_title",
+            "meta_description",
+            "category",
+            "subcategory",
+            "price",
+            "original_price",
+            "discount_percentage",
+            "description",
+            "short_description",
+            "features",
+            "sofa_feature_highlights",
+            "dimensions",
+            "faqs",
+            "delivery_info",
+            "returns_guarantee",
+            "delivery_title",
+            "returns_title",
+            "custom_info_sections",
+            "delivery_charges",
+            "assembly_service_enabled",
+            "assembly_service_price",
+            "stock_status",
+            "dimension_paragraph",
+            "dimension_note",
+            "dimension_images",
+            "show_dimensions_table",
+            "in_stock",
+            "is_hidden",
+            "is_bestseller",
+            "is_new",
+            "show_size_icons",
+            "sort_order",
+            "rating",
+            "review_count",
+            "images",
+            "category_name",
+            "subcategory_name",
+            "category_slug",
+            "subcategory_slug",
+        )
+
+
 # Lighter serializer for list views to keep responses smaller
 class ProductListSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
     images = serializers.SerializerMethodField()
@@ -930,6 +1002,13 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
             "colors",
             "styles",
             "short_description",
+            "description",
+            "features",
+            "dimensions",
+            "dimension_paragraph",
+            "dimension_note",
+            "dimension_images",
+            "show_dimensions_table",
             "category_name",
             "subcategory_name",
             "category_slug",

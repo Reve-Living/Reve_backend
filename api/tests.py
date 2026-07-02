@@ -1997,7 +1997,51 @@ class ProductImageOrderTests(TestCase):
         self.assertEqual(response.data["id"], product.id)
         self.assertIn("description", response.data)
         self.assertNotIn("mattresses", response.data)
+        self.assertNotIn("filters", response.data)
+        self.assertNotIn("videos", response.data)
+        self.assertNotIn("suggested_products", response.data)
         self.assertNotIn("suggested_products_data", response.data)
+
+    def test_product_quick_detail_contains_content_without_variant_relations(self):
+        category = Category.objects.create(name="Beds", slug="beds-quick-detail", sort_order=1)
+        product = Product.objects.create(
+            name="Quick Detail Bed",
+            slug="quick-detail-bed",
+            category=category,
+            price="599.99",
+            short_description="Short",
+            description="Long description",
+            features=["Fast detail"],
+        )
+        ProductImage.objects.create(product=product, url="https://example.com/quick.jpg")
+        ProductSize.objects.create(product=product, name="5ft King", price_delta="699.99")
+
+        response = APIClient().get(f"/api/products/{product.id}/?quick=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["description"], "Long description")
+        self.assertEqual(response.data["features"], ["Fast detail"])
+        self.assertEqual(response.data["images"][0]["url"], "https://example.com/quick.jpg")
+        self.assertNotIn("sizes", response.data)
+        self.assertNotIn("mattresses", response.data)
+
+    def test_product_detail_cache_does_not_mix_quick_and_full_responses(self):
+        category = Category.objects.create(name="Beds", slug="beds-detail-cache-kind", sort_order=1)
+        product = Product.objects.create(
+            name="Cache Kind Bed",
+            slug="cache-kind-bed",
+            category=category,
+            price="599.99",
+            description="Long",
+        )
+        ProductSize.objects.create(product=product, name="5ft King", price_delta="699.99")
+        client = APIClient()
+
+        quick_response = client.get(f"/api/products/{product.id}/?quick=1")
+        full_response = client.get(f"/api/products/{product.id}/")
+
+        self.assertNotIn("sizes", quick_response.data)
+        self.assertIn("sizes", full_response.data)
 
     def test_product_summary_can_include_filter_values_on_demand(self):
         category = Category.objects.create(name="Beds", slug="beds-summary-include-filters", sort_order=1)
