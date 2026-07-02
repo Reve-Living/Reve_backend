@@ -514,6 +514,19 @@ class ProductSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
     rating = serializers.SerializerMethodField()
     review_count = serializers.SerializerMethodField()
 
+    def _query_flag(self, key):
+        request = self.context.get("request")
+        if not request:
+            return False
+        return request.query_params.get(key) in ("1", "true", "True")
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if self._query_flag("core"):
+            fields.pop("suggested_products_data", None)
+            fields.pop("mattresses", None)
+        return fields
+
     class Meta:
         model = Product
         fields = (
