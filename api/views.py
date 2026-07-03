@@ -1584,14 +1584,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         Cache anonymous storefront product lists briefly. Admin mutations clear
         the process cache, and the short TTL smooths over cold Render/Neon waits.
         """
-        should_profile = (
-            PRODUCT_SQL_DEBUG_LOG
-            or (
-                request.method == "GET"
-                and request.query_params.get("summary") in ("1", "true", "True")
-                and request.query_params.get("limit")
-            )
-        )
+        should_profile = PRODUCT_SQL_DEBUG_LOG
         previous_force_debug_cursor = connection.force_debug_cursor
         if should_profile:
             connection.force_debug_cursor = True
