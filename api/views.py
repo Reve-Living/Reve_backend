@@ -64,6 +64,7 @@ from .serializers import (
     ProductQuickSerializer,
     ProductSummarySerializer,
     ProductAdminListSerializer,
+    ProductAdminPickerSerializer,
     ProductWriteSerializer,
     OrderSerializer,
     ReviewSerializer,
@@ -1183,6 +1184,8 @@ class ProductViewSet(viewsets.ModelViewSet):
         "format",
         "ordering",
         "search",
+        "q",
+        "admin_picker",
     }
 
     # Prefetch groups tuned for list vs detail
@@ -1305,6 +1308,13 @@ class ProductViewSet(viewsets.ModelViewSet):
         "is_new",
         "sort_order",
     ]
+    _admin_picker_only_fields = [
+        "id",
+        "name",
+        "slug",
+        "category_id",
+        "subcategory_id",
+    ]
 
     def _base_queryset(self):
         return Product.objects.select_related("category", "subcategory")
@@ -1337,6 +1347,12 @@ class ProductViewSet(viewsets.ModelViewSet):
         return (
             self.action == "list"
             and self.request.query_params.get("admin_summary") in ("1", "true", "True")
+        )
+
+    def _is_admin_picker_request(self):
+        return (
+            self.action == "list"
+            and self.request.query_params.get("admin_picker") in ("1", "true", "True")
         )
 
     def _summary_includes_filters(self):
@@ -1381,6 +1397,8 @@ class ProductViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         if self._is_quick_detail_request():
             return ProductQuickSerializer
+        if self._is_admin_picker_request():
+            return ProductAdminPickerSerializer
         if self._is_admin_summary_request():
             return ProductAdminListSerializer
         if self.action == "list" and self.request.query_params.get("summary") in ("1", "true", "True"):
@@ -1395,13 +1413,25 @@ class ProductViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         # Choose a lighter prefetch set for list views (most traffic)
         is_list = self.action == "list" and not self.request.query_params.get("slug")
+        is_admin_picker = self._is_admin_picker_request()
         is_admin_summary = self._is_admin_summary_request()
         is_summary = is_list and self.request.query_params.get("summary") in ("1", "true", "True")
         primary_image_subquery = _primary_image_subquery()
         primary_image_flip_subquery = _primary_image_flip_subquery()
         min_size_price_subquery = _min_size_price_subquery()
         size_count_subquery = _size_count_subquery()
-        if is_admin_summary:
+        if is_admin_picker:
+            queryset = (
+                Product.objects.select_related("category", "subcategory")
+                .only(
+                    *self._admin_picker_only_fields,
+                    "category__name",
+                    "category__slug",
+                    "subcategory__name",
+                    "subcategory__slug",
+                )
+            )
+        elif is_admin_summary:
             queryset = (
                 Product.objects.select_related("category", "subcategory")
                 .only(
@@ -1482,6 +1512,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         bestseller = self.request.query_params.get("bestseller")
         is_new = self.request.query_params.get("is_new")
         slug = self.request.query_params.get("slug")
+        search = (self.request.query_params.get("search") or self.request.query_params.get("q") or "").strip()
         
         if category:
             category_id, linked_subcategory_ids = self._get_category_scope_ids(category)
@@ -1500,6 +1531,15 @@ class ProductViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(is_new=True)
         if slug:
             queryset = queryset.filter(slug=slug)
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search)
+                | Q(slug__icontains=search)
+                | Q(category__name__icontains=search)
+                | Q(category__slug__icontains=search)
+                | Q(subcategory__name__icontains=search)
+                | Q(subcategory__slug__icontains=search)
+            )
         
         # Apply dynamic filters from filter system only when relevant query params exist.
         filter_param_keys = set(self.request.query_params.keys()) - self._non_filter_query_params

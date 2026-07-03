@@ -614,25 +614,28 @@ class ProductSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
         """
         request = self.context.get("request")
         is_admin_request = bool(request and request.user and request.user.is_authenticated and request.user.is_staff)
-        options = (
-            MattressOption.objects.filter(is_active=True)
-            .prefetch_related("prices", "categories", "subcategories", "products")
-            .annotate(
-                sort_priority=Case(
-                    When(sort_order__gt=0, then=Value(0)),
-                    default=Value(1),
-                    output_field=IntegerField(),
-                )
-            )
-            .order_by("sort_priority", "sort_order", "name")
-        )
-
         cache_key = (
             f"mattress-options:product-detail:v2:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
         )
         base_items = cache.get(cache_key)
         if base_items is None:
-            serialized_items = list(MattressOptionSerializer(options, many=True).data)
+            library_cache_key = "mattress-options:active-library:v2"
+            serialized_items = cache.get(library_cache_key)
+            if serialized_items is None:
+                options = (
+                    MattressOption.objects.filter(is_active=True)
+                    .prefetch_related("prices", "categories", "subcategories", "products")
+                    .annotate(
+                        sort_priority=Case(
+                            When(sort_order__gt=0, then=Value(0)),
+                            default=Value(1),
+                            output_field=IntegerField(),
+                        )
+                    )
+                    .order_by("sort_priority", "sort_order", "name")
+                )
+                serialized_items = list(MattressOptionSerializer(options, many=True).data)
+                cache.set(library_cache_key, serialized_items, 60 * 5)
             base_items = [
                 item
                 for item in serialized_items
@@ -1085,6 +1088,27 @@ class ProductAdminListSerializer(serializers.ModelSerializer):
             "category_slug",
             "subcategory_slug",
             "imported_from_product",
+        ]
+
+
+class ProductAdminPickerSerializer(serializers.ModelSerializer):
+    category_name = serializers.ReadOnlyField(source="category.name")
+    subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
+    category_slug = serializers.ReadOnlyField(source="category.slug")
+    subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
+
+    class Meta:
+        model = Product
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "category",
+            "subcategory",
+            "category_name",
+            "subcategory_name",
+            "category_slug",
+            "subcategory_slug",
         ]
 
 
