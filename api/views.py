@@ -130,6 +130,10 @@ def _nonnegative_int_query_param(request, key, maximum=10000):
     return min(value, maximum)
 
 
+def _truthy_query_param(request, key):
+    return request.query_params.get(key) in ("1", "true", "True")
+
+
 def _primary_image_subquery():
     return (
         ProductImage.objects.filter(product_id=OuterRef("pk"))
@@ -1491,6 +1495,47 @@ class ProductViewSet(viewsets.ModelViewSet):
             and not self._is_admin_summary_request()
         )
         include_total = is_limited_summary and self._summary_includes_total()
+        is_card_summary = is_limited_summary and _truthy_query_param(request, "card")
+
+        def serialize_card_product(product):
+            primary_image_url = str(getattr(product, "primary_image_url", "") or "").strip()
+            return {
+                "id": product.id,
+                "name": product.name,
+                "slug": product.slug,
+                "category": product.category_id,
+                "subcategory": product.subcategory_id,
+                "price": product.price,
+                "original_price": product.original_price,
+                "min_size_price": getattr(product, "min_size_price", None),
+                "size_count": getattr(product, "size_count", None),
+                "stock_status": product.stock_status,
+                "in_stock": product.in_stock,
+                "is_hidden": product.is_hidden,
+                "is_bestseller": product.is_bestseller,
+                "is_new": product.is_new,
+                "sort_order": product.sort_order,
+                "rating": product.rating,
+                "review_count": product.review_count,
+                "short_description": product.short_description,
+                "category_name": product.category.name if product.category_id and product.category else "",
+                "subcategory_name": product.subcategory.name if product.subcategory_id and product.subcategory else "",
+                "category_slug": product.category.slug if product.category_id and product.category else "",
+                "subcategory_slug": product.subcategory.slug if product.subcategory_id and product.subcategory else "",
+                "imported_from_product": product.imported_from_product_id,
+                "images": (
+                    [
+                        {
+                            "id": 0,
+                            "url": primary_image_url,
+                            "alt_text": product.name or "",
+                            "flip_horizontal": bool(getattr(product, "primary_image_flip_horizontal", False)),
+                        }
+                    ]
+                    if primary_image_url
+                    else []
+                ),
+            }
 
         def limited_summary_response():
             queryset = self.filter_queryset(self.get_queryset())
@@ -1500,6 +1545,8 @@ class ProductViewSet(viewsets.ModelViewSet):
                 page = queryset[offset : offset + limit]
                 serializer = self.get_serializer(page, many=True)
                 return Response({"count": total, "results": serializer.data})
+            if is_card_summary:
+                return Response([serialize_card_product(product) for product in queryset[:limit]])
             serializer = self.get_serializer(queryset[:limit], many=True)
             return Response(serializer.data)
         is_admin_request = bool(request.user and request.user.is_authenticated and request.user.is_staff)
