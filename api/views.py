@@ -1370,11 +1370,9 @@ class ProductViewSet(viewsets.ModelViewSet):
         )
 
     def _summary_includes_filters(self):
-        return (
-            self.action == "list"
-            and self.request.query_params.get("summary") in ("1", "true", "True")
-            and self.request.query_params.get("include_filters") in ("1", "true", "True")
-        )
+        # Keep product listings fast; category filters are served separately by
+        # /api/products/filters/ so product cards do not serialize filter values.
+        return False
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
