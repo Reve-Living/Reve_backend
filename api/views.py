@@ -11,7 +11,7 @@ from django.core.files.base import ContentFile
 from django.contrib.auth.models import User
 from django.utils.text import slugify
 from django.db import transaction
-from django.db.models import Avg, Count, DecimalField, IntegerField, OuterRef, Prefetch, Q, Subquery, Case, When, Value
+from django.db.models import Avg, BooleanField, Count, DecimalField, IntegerField, OuterRef, Prefetch, Q, Subquery, Case, When, Value
 from django.core.cache import cache
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
@@ -135,6 +135,14 @@ def _primary_image_subquery():
         ProductImage.objects.filter(product_id=OuterRef("pk"))
         .order_by("sort_order", "id")
         .values("url")[:1]
+    )
+
+
+def _primary_image_flip_subquery():
+    return (
+        ProductImage.objects.filter(product_id=OuterRef("pk"))
+        .order_by("sort_order", "id")
+        .values("flip_horizontal")[:1]
     )
 
 
@@ -1181,13 +1189,6 @@ class ProductViewSet(viewsets.ModelViewSet):
         "price",
         "original_price",
         "short_description",
-        "description",
-        "features",
-        "dimensions",
-        "dimension_paragraph",
-        "dimension_note",
-        "dimension_images",
-        "show_dimensions_table",
         "stock_status",
         "in_stock",
         "is_hidden",
@@ -1243,6 +1244,20 @@ class ProductViewSet(viewsets.ModelViewSet):
             and self.request.query_params.get("include_sizes") in ("1", "true", "True")
         )
 
+    def _summary_includes_content(self):
+        return (
+            self.action == "list"
+            and self.request.query_params.get("summary") in ("1", "true", "True")
+            and self.request.query_params.get("include_content") in ("1", "true", "True")
+        )
+
+    def _summary_includes_total(self):
+        return (
+            self.action == "list"
+            and self.request.query_params.get("summary") in ("1", "true", "True")
+            and self.request.query_params.get("include_total") in ("1", "true", "True")
+        )
+
     def _is_core_detail_request(self):
         return self.request.query_params.get("core") in ("1", "true", "True")
 
@@ -1269,6 +1284,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         is_admin_summary = self._is_admin_summary_request()
         is_summary = is_list and self.request.query_params.get("summary") in ("1", "true", "True")
         primary_image_subquery = _primary_image_subquery()
+        primary_image_flip_subquery = _primary_image_flip_subquery()
         min_size_price_subquery = _min_size_price_subquery()
         size_count_subquery = _size_count_subquery()
         if is_admin_summary:
@@ -1290,15 +1306,29 @@ class ProductViewSet(viewsets.ModelViewSet):
                 summary_prefetches.extend(self._summary_filter_prefetches)
             if self._summary_includes_variants():
                 summary_prefetches.extend(self._summary_variant_prefetches)
+            summary_only_fields = list(self._summary_only_fields)
+            if self._summary_includes_content():
+                summary_only_fields.extend(
+                    [
+                        "description",
+                        "features",
+                        "dimensions",
+                        "dimension_paragraph",
+                        "dimension_note",
+                        "dimension_images",
+                        "show_dimensions_table",
+                    ]
+                )
             queryset = (
                 self._base_queryset()
                 .prefetch_related(*summary_prefetches)
                 .annotate(
                     primary_image_url=Subquery(primary_image_subquery),
+                    primary_image_flip_horizontal=Subquery(primary_image_flip_subquery, output_field=BooleanField()),
                     min_size_price=Subquery(min_size_price_subquery, output_field=DecimalField(max_digits=10, decimal_places=2)),
                     size_count=Subquery(size_count_subquery, output_field=IntegerField()),
                 )
-                .only(*self._summary_only_fields, "category__name", "category__slug", "subcategory__name", "subcategory__slug")
+                .only(*summary_only_fields, "category__name", "category__slug", "subcategory__name", "subcategory__slug")
             )
         else:
             if self._is_quick_detail_request():
@@ -1309,10 +1339,16 @@ class ProductViewSet(viewsets.ModelViewSet):
                 )
             queryset = self._base_queryset().prefetch_related(*prefetches)
             if self._is_quick_detail_request():
-                queryset = queryset.annotate(primary_image_url=Subquery(primary_image_subquery))
+                queryset = queryset.annotate(
+                    primary_image_url=Subquery(primary_image_subquery),
+                    primary_image_flip_horizontal=Subquery(primary_image_flip_subquery, output_field=BooleanField()),
+                )
             if is_list:
                 queryset = (
-                    queryset.annotate(primary_image_url=Subquery(primary_image_subquery))
+                    queryset.annotate(
+                        primary_image_url=Subquery(primary_image_subquery),
+                        primary_image_flip_horizontal=Subquery(primary_image_flip_subquery, output_field=BooleanField()),
+                    )
                     .only(
                         *self._list_only_fields,
                         "category__name",
@@ -1376,7 +1412,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         else:
             queryset = queryset.order_by("sort_order", "-created_at")
 
-        if is_summary:
+        if is_summary and not self._summary_includes_total():
             limit = _positive_int_query_param(self.request, "limit", maximum=100)
             offset = _nonnegative_int_query_param(self.request, "offset")
             if limit is not None:
@@ -1399,6 +1435,18 @@ class ProductViewSet(viewsets.ModelViewSet):
             and request.query_params.get("summary") in ("1", "true", "True")
             and not self._is_admin_summary_request()
         )
+        include_total = is_limited_summary and self._summary_includes_total()
+
+        def limited_summary_response():
+            queryset = self.filter_queryset(self.get_queryset())
+            if include_total:
+                total = queryset.count()
+                offset = _nonnegative_int_query_param(request, "offset")
+                page = queryset[offset : offset + limit]
+                serializer = self.get_serializer(page, many=True)
+                return Response({"count": total, "results": serializer.data})
+            serializer = self.get_serializer(queryset[:limit], many=True)
+            return Response(serializer.data)
         is_admin_request = bool(request.user and request.user.is_authenticated and request.user.is_staff)
         can_cache = (
             request.method == "GET"
@@ -1408,9 +1456,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         )
         if not can_cache:
             if is_limited_summary:
-                queryset = self.filter_queryset(self.get_queryset())[:limit]
-                serializer = self.get_serializer(queryset, many=True)
-                return Response(serializer.data)
+                return limited_summary_response()
             return super().list(request, *args, **kwargs)
 
         query_string = urlencode(sorted(request.query_params.lists()), doseq=True)
@@ -1420,9 +1466,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             return Response(cached_data)
 
         if is_limited_summary:
-            queryset = self.filter_queryset(self.get_queryset())[:limit]
-            serializer = self.get_serializer(queryset, many=True)
-            response = Response(serializer.data)
+            response = limited_summary_response()
         else:
             response = super().list(request, *args, **kwargs)
         if response.status_code == status.HTTP_200_OK:
@@ -1760,6 +1804,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 color_name=image.color_name,
                 style_name=image.style_name,
                 alt_text=image.alt_text,
+                flip_horizontal=image.flip_horizontal,
                 sort_order=image.sort_order,
             )
 
@@ -1863,6 +1908,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 color_name=img.get("color_name", ""),
                 style_name=img.get("style_name", ""),
                 alt_text=img.get("alt_text", ""),
+                flip_horizontal=bool(img.get("flip_horizontal", False)),
                 sort_order=img.get("sort_order", 0),
             )
         for vid in videos:
@@ -1965,6 +2011,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             color_name = str((img or {}).get("color_name", "")).strip()
             style_name = str((img or {}).get("style_name", "")).strip()
             alt_text = str((img or {}).get("alt_text", "")).strip()
+            flip_horizontal = bool((img or {}).get("flip_horizontal", False))
             raw_sort_order = (img or {}).get("sort_order", 0)
             if not url:
                 continue
@@ -1986,6 +2033,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                     "color_name": color_name,
                     "style_name": style_name,
                     "alt_text": alt_text,
+                    "flip_horizontal": flip_horizontal,
                     "sort_order": sort_order,
                 }
             )
@@ -3418,6 +3466,75 @@ class FilterOptionViewSet(viewsets.ModelViewSet):
     queryset = FilterOption.objects.all().select_related("filter_type").order_by("display_order", "name")
     serializer_class = FilterOptionSerializer
     permission_classes = [IsAdminOrReadOnly]
+
+    @action(detail=True, methods=["get", "patch"], url_path="products")
+    def products(self, request, pk=None):
+        if not request.user or not request.user.is_staff:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        option = self.get_object()
+
+        if request.method == "GET":
+            assigned_products = (
+                Product.objects.filter(filter_values__filter_option=option)
+                .select_related("category", "subcategory")
+                .order_by("sort_order", "-created_at")
+                .distinct()
+            )
+            assigned_product_ids = list(assigned_products.values_list("id", flat=True))
+            return Response(
+                {
+                    "filter_option": option.id,
+                    "assigned_product_ids": assigned_product_ids,
+                    "assigned_products": ProductAdminListSerializer(assigned_products, many=True).data,
+                }
+            )
+
+        raw_product_ids = request.data.get("product_ids", [])
+        if not isinstance(raw_product_ids, list):
+            raise ValidationError({"product_ids": "Expected a list of product IDs."})
+
+        normalized_ids = []
+        for raw_id in raw_product_ids:
+            try:
+                product_id = int(raw_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"product_ids": "Product IDs must be numbers."})
+            if product_id > 0 and product_id not in normalized_ids:
+                normalized_ids.append(product_id)
+
+        valid_ids = set(Product.objects.filter(id__in=normalized_ids).values_list("id", flat=True))
+        if len(valid_ids) != len(normalized_ids):
+            raise ValidationError({"product_ids": "One or more products do not exist."})
+
+        with transaction.atomic():
+            ProductFilterValue.objects.filter(filter_option=option).exclude(product_id__in=normalized_ids).delete()
+            existing_ids = set(
+                ProductFilterValue.objects.filter(filter_option=option, product_id__in=normalized_ids).values_list(
+                    "product_id", flat=True
+                )
+            )
+            ProductFilterValue.objects.bulk_create(
+                [
+                    ProductFilterValue(product_id=product_id, filter_option=option)
+                    for product_id in normalized_ids
+                    if product_id not in existing_ids
+                ],
+                ignore_conflicts=True,
+            )
+        cache.clear()
+        assigned_products = (
+            Product.objects.filter(id__in=normalized_ids)
+            .select_related("category", "subcategory")
+            .order_by("sort_order", "-created_at")
+        )
+        return Response(
+            {
+                "filter_option": option.id,
+                "assigned_product_ids": normalized_ids,
+                "assigned_products": ProductAdminListSerializer(assigned_products, many=True).data,
+            }
+        )
 
     def perform_create(self, serializer):
         serializer.save()

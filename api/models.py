@@ -295,6 +295,7 @@ class ProductImage(models.Model):
     color_name = models.CharField(max_length=120, blank=True, default="")
     style_name = models.CharField(max_length=120, blank=True, default="")
     alt_text = models.CharField(max_length=255, blank=True, default="")
+    flip_horizontal = models.BooleanField(default=False)
     sort_order = models.PositiveIntegerField(default=0)
 
     class Meta:

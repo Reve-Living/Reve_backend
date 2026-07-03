@@ -301,7 +301,7 @@ class CategorySerializer(serializers.ModelSerializer):
 class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductImage
-        fields = ("id", "url", "color_name", "style_name", "alt_text", "sort_order")
+        fields = ("id", "url", "color_name", "style_name", "alt_text", "flip_horizontal", "sort_order")
 
 
 class ProductVideoSerializer(serializers.ModelSerializer):
@@ -326,6 +326,7 @@ class ProductListImageSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     url = serializers.CharField()
     alt_text = serializers.CharField(allow_blank=True, required=False)
+    flip_horizontal = serializers.BooleanField(required=False)
 
 
 class ProductSummaryColorSerializer(serializers.ModelSerializer):
@@ -780,7 +781,14 @@ class ProductQuickSerializer(ProductReviewSummaryMixin, serializers.ModelSeriali
         if not primary_url:
             return []
         return ProductListImageSerializer(
-            [{"id": 0, "url": primary_url, "alt_text": obj.name or ""}],
+            [
+                {
+                    "id": 0,
+                    "url": primary_url,
+                    "alt_text": obj.name or "",
+                    "flip_horizontal": bool(getattr(obj, "primary_image_flip_horizontal", False)),
+                }
+            ],
             many=True,
         ).data
 
@@ -890,7 +898,14 @@ class ProductListSerializer(ProductReviewSummaryMixin, serializers.ModelSerializ
         primary_url = str(getattr(obj, "primary_image_url", "") or "").strip()
         if primary_url:
             return ProductListImageSerializer(
-                [{"id": 0, "url": primary_url, "alt_text": obj.name or ""}],
+                [
+                    {
+                        "id": 0,
+                        "url": primary_url,
+                        "alt_text": obj.name or "",
+                        "flip_horizontal": bool(getattr(obj, "primary_image_flip_horizontal", False)),
+                    }
+                ],
                 many=True,
             ).data
 
@@ -902,6 +917,7 @@ class ProductListSerializer(ProductReviewSummaryMixin, serializers.ModelSerializ
                         "id": int(getattr(image, "id", 0) or 0),
                         "url": image.url,
                         "alt_text": getattr(image, "alt_text", "") or obj.name or "",
+                        "flip_horizontal": bool(getattr(image, "flip_horizontal", False)),
                     }
                 ],
                 many=True,
@@ -943,6 +959,7 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
         include_filters = self._query_flag("include_filters")
         include_variants = self._query_flag("include_variants")
         include_sizes = self._query_flag("include_sizes")
+        include_content = self._query_flag("include_content")
         if not include_sizes:
             fields.pop("sizes", None)
         if not include_filters:
@@ -950,13 +967,31 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
         if not include_variants:
             fields.pop("colors", None)
             fields.pop("styles", None)
+        if not include_content:
+            for field_name in (
+                "description",
+                "features",
+                "dimensions",
+                "dimension_paragraph",
+                "dimension_note",
+                "dimension_images",
+                "show_dimensions_table",
+            ):
+                fields.pop(field_name, None)
         return fields
 
     def get_images(self, obj):
         primary_url = str(getattr(obj, "primary_image_url", "") or "").strip()
         if primary_url:
             return ProductListImageSerializer(
-                [{"id": 0, "url": primary_url, "alt_text": obj.name or ""}],
+                [
+                    {
+                        "id": 0,
+                        "url": primary_url,
+                        "alt_text": obj.name or "",
+                        "flip_horizontal": bool(getattr(obj, "primary_image_flip_horizontal", False)),
+                    }
+                ],
                 many=True,
             ).data
 
@@ -968,6 +1003,7 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
                         "id": int(getattr(image, "id", 0) or 0),
                         "url": image.url,
                         "alt_text": getattr(image, "alt_text", "") or obj.name or "",
+                        "flip_horizontal": bool(getattr(image, "flip_horizontal", False)),
                     }
                 ],
                 many=True,

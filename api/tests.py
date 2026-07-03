@@ -1852,6 +1852,37 @@ class ProductImageOrderTests(TestCase):
                 "https://example.com/second.jpg",
             ],
         )
+        self.assertEqual(
+            list(product.images.order_by("sort_order", "id").values_list("flip_horizontal", flat=True)),
+            [False, False],
+        )
+
+    def test_product_image_flip_horizontal_is_serialized_without_changing_image(self):
+        category = Category.objects.create(name="Sofas", slug="sofas-image-flip", sort_order=1)
+        product = Product.objects.create(
+            name="Flip Sofa",
+            slug="flip-sofa",
+            category=category,
+            price="499.99",
+            short_description="Short",
+            description="Long",
+        )
+        ProductImage.objects.create(
+            product=product,
+            url="https://example.com/sofa.jpg",
+            alt_text="Sofa facing left",
+            flip_horizontal=True,
+            sort_order=1,
+        )
+
+        detail_response = APIClient().get(f"/api/products/?slug={product.slug}")
+        summary_response = APIClient().get(f"/api/products/?category={category.slug}&summary=1&limit=1")
+
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(summary_response.status_code, 200)
+        self.assertEqual(detail_response.data[0]["images"][0]["url"], "https://example.com/sofa.jpg")
+        self.assertTrue(detail_response.data[0]["images"][0]["flip_horizontal"])
+        self.assertTrue(summary_response.data[0]["images"][0]["flip_horizontal"])
 
     def test_product_summary_handles_products_without_images(self):
         category = Category.objects.create(name="Beds", slug="beds-summary-no-images", sort_order=1)
@@ -1979,6 +2010,45 @@ class ProductImageOrderTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual([item["slug"] for item in response.data], ["offset-bed-1", "offset-bed-2"])
+
+    def test_product_summary_can_return_total_with_first_batch(self):
+        category = Category.objects.create(name="Dining", slug="dining-summary-total", sort_order=1)
+        for index in range(5):
+            Product.objects.create(
+                name=f"Dining Product {index}",
+                slug=f"dining-summary-total-{index}",
+                category=category,
+                price="299.99",
+                description="Long content",
+                sort_order=index,
+            )
+
+        response = APIClient().get(
+            f"/api/products/?category={category.slug}&summary=1&limit=2&include_total=1"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 5)
+        self.assertEqual(len(response.data["results"]), 2)
+
+    def test_product_summary_omits_heavy_content_unless_requested(self):
+        category = Category.objects.create(name="Chairs", slug="chairs-summary-content", sort_order=1)
+        Product.objects.create(
+            name="Content Chair",
+            slug="content-chair-summary",
+            category=category,
+            price="299.99",
+            description="Detailed chair content",
+            features=["Solid wood"],
+        )
+
+        light_response = APIClient().get(f"/api/products/?category={category.slug}&summary=1&limit=1")
+        content_response = APIClient().get(
+            f"/api/products/?category={category.slug}&summary=1&limit=1&include_content=1"
+        )
+
+        self.assertNotIn("description", light_response.data[0])
+        self.assertEqual(content_response.data[0]["description"], "Detailed chair content")
 
     def test_product_core_detail_omits_expensive_optional_fields(self):
         category = Category.objects.create(name="Beds", slug="beds-core-detail", sort_order=1)
@@ -3187,3 +3257,71 @@ class CategoryFilterOptionOrderTests(TestCase):
         self.assertEqual(response.status_code, 400)
         category_filter.refresh_from_db()
         self.assertEqual(category_filter.option_order, [])
+
+
+class FilterOptionProductAssignmentTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = User.objects.create_user(username="filter-option-admin", password="password", is_staff=True)
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def test_filter_option_products_endpoint_assigns_and_removes_products(self):
+        category = Category.objects.create(name="Dining", slug="dining-filter-option-products")
+        filter_type = FilterType.objects.create(name="Seats", slug="seats-filter-option-products")
+        option = FilterOption.objects.create(filter_type=filter_type, name="4 Seater", slug="four-seater-products")
+        first = Product.objects.create(
+            name="Round Dining Table",
+            slug="round-dining-table-filter-option",
+            category=category,
+            price="299.99",
+            description="Dining table",
+        )
+        second = Product.objects.create(
+            name="Oak Dining Table",
+            slug="oak-dining-table-filter-option",
+            category=category,
+            price="399.99",
+            description="Dining table",
+        )
+
+        response = self.client.patch(
+            f"/api/filter-options/{option.id}/products/",
+            {"product_ids": [first.id, second.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(response.data["assigned_product_ids"]), {first.id, second.id})
+        self.assertTrue(ProductFilterValue.objects.filter(product=first, filter_option=option).exists())
+        self.assertTrue(ProductFilterValue.objects.filter(product=second, filter_option=option).exists())
+
+        response = self.client.patch(
+            f"/api/filter-options/{option.id}/products/",
+            {"product_ids": [second.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["assigned_product_ids"], [second.id])
+        self.assertFalse(ProductFilterValue.objects.filter(product=first, filter_option=option).exists())
+        self.assertTrue(ProductFilterValue.objects.filter(product=second, filter_option=option).exists())
+
+    def test_filter_option_products_endpoint_returns_assigned_products(self):
+        category = Category.objects.create(name="Beds", slug="beds-filter-option-products")
+        filter_type = FilterType.objects.create(name="Size", slug="size-filter-option-products")
+        option = FilterOption.objects.create(filter_type=filter_type, name="King", slug="king-products")
+        product = Product.objects.create(
+            name="King Bed",
+            slug="king-bed-filter-option-products",
+            category=category,
+            price="499.99",
+            description="Bed",
+        )
+        ProductFilterValue.objects.create(product=product, filter_option=option)
+
+        response = self.client.get(f"/api/filter-options/{option.id}/products/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["assigned_product_ids"], [product.id])
+        self.assertEqual(response.data["assigned_products"][0]["name"], "King Bed")
