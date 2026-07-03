@@ -1370,9 +1370,16 @@ class ProductViewSet(viewsets.ModelViewSet):
         )
 
     def _summary_includes_filters(self):
-        # Product listings should stay products-only; filters are served by
-        # /api/products/filters/ so category pages do not pay per-product filter cost.
-        return False
+        return (
+            self.action == "list"
+            and self.request.query_params.get("summary") in ("1", "true", "True")
+            and self.request.query_params.get("include_filters") in ("1", "true", "True")
+        )
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["include_product_filter_values"] = self._summary_includes_filters()
+        return context
 
     def _summary_includes_variants(self):
         return (
