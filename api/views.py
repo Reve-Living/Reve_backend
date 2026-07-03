@@ -13,7 +13,7 @@ from django.core.files.base import ContentFile
 from django.contrib.auth.models import User
 from django.utils.text import slugify
 from django.db import connection, transaction
-from django.db.models import Avg, BooleanField, Count, DecimalField, IntegerField, OuterRef, Prefetch, Q, Subquery, Case, When, Value
+from django.db.models import Avg, BooleanField, Count, DecimalField, Exists, IntegerField, OuterRef, Prefetch, Q, Subquery, Case, When, Value
 from django.core.cache import cache
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
@@ -1560,18 +1560,66 @@ class ProductViewSet(viewsets.ModelViewSet):
                 | Q(subcategory__slug__icontains=search)
             )
         
-        # Apply dynamic filters from filter system only when relevant query params exist.
+        # Apply dynamic filters with EXISTS so category listings do not pay for
+        # joined rows + DISTINCT on every filter click.
         filter_param_keys = set(self.request.query_params.keys()) - self._non_filter_query_params
         if filter_param_keys:
-            filter_types = FilterType.objects.filter(is_active=True, slug__in=filter_param_keys).only("id", "slug")
-            for ft in filter_types:
-                filter_values = self.request.query_params.get(ft.slug)
-                if filter_values:
-                    option_slugs = filter_values.split(',')
+            requested_filter_values = {
+                key: [
+                    value.strip()
+                    for value in (self.request.query_params.get(key) or "").split(",")
+                    if value.strip()
+                ]
+                for key in filter_param_keys
+            }
+            requested_filter_values = {
+                key: values for key, values in requested_filter_values.items() if values
+            }
+            if requested_filter_values:
+                active_filter_slugs = set(
+                    FilterType.objects.filter(
+                        is_active=True,
+                        slug__in=requested_filter_values.keys(),
+                    ).values_list("slug", flat=True)
+                )
+                requested_filter_values = {
+                    key: values
+                    for key, values in requested_filter_values.items()
+                    if key in active_filter_slugs
+                }
+            if requested_filter_values:
+                option_ids_by_filter = {}
+                option_rows = (
+                    FilterOption.objects.filter(
+                        filter_type__is_active=True,
+                        filter_type__slug__in=requested_filter_values.keys(),
+                    )
+                    .filter(
+                        Q(
+                            *[
+                                Q(filter_type__slug=filter_slug, slug__in=option_slugs)
+                                for filter_slug, option_slugs in requested_filter_values.items()
+                            ],
+                            _connector=Q.OR,
+                        )
+                    )
+                    .values_list("filter_type__slug", "id")
+                )
+                for filter_slug, option_id in option_rows:
+                    option_ids_by_filter.setdefault(filter_slug, []).append(option_id)
+
+                for filter_slug in requested_filter_values:
+                    option_ids = option_ids_by_filter.get(filter_slug)
+                    if not option_ids:
+                        return queryset.none()
                     queryset = queryset.filter(
-                        filter_values__filter_option__slug__in=option_slugs,
-                        filter_values__filter_option__filter_type=ft
-                    ).distinct()
+                        Exists(
+                            ProductFilterValue.objects.filter(
+                                product_id=OuterRef("pk"),
+                                filter_option_id__in=option_ids,
+                            )
+                        )
+                    )
         
         if category and not subcategory:
             queryset = queryset.order_by("subcategory__sort_order", "subcategory__name", "sort_order", "-created_at")
