@@ -12,6 +12,7 @@ from .views import (
     LifestyleSectionViewSet,
     LifestyleArticleViewSet,
     ProductViewSet,
+    ProductFiltersView,
     OrderViewSet,
     ReviewViewSet,
     UploadViewSet,
@@ -51,6 +52,7 @@ router.register(r"promotions", PromotionViewSet)
 
 urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="health"),
+    path("products/filters/", ProductFiltersView.as_view(), name="product-filters"),
     path("", include(router.urls)),
     path("register/", RegisterView.as_view(), name="register"),
     path("login/", TokenObtainPairView.as_view(), name="token_obtain_pair"),

@@ -3,6 +3,7 @@ import os
 import stripe
 import re
 import logging
+import time
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import urlencode, urljoin
 
@@ -99,7 +100,7 @@ from .payments import (
 TWOPLACES = Decimal("0.01")
 PRODUCT_LIST_CACHE_TTL = int(os.getenv("PRODUCT_LIST_CACHE_TTL", "300"))
 PRODUCT_DETAIL_CACHE_TTL = int(os.getenv("PRODUCT_DETAIL_CACHE_TTL", "60"))
-CATEGORY_FILTER_CACHE_TTL = int(os.getenv("CATEGORY_FILTER_CACHE_TTL", "300"))
+CATEGORY_FILTER_CACHE_TTL = int(os.getenv("CATEGORY_FILTER_CACHE_TTL", "900"))
 PRODUCT_LIST_PAGE_SIZE = int(os.getenv("PRODUCT_LIST_PAGE_SIZE", "24"))
 PRODUCT_SQL_DEBUG_LOG = os.getenv("PRODUCT_SQL_DEBUG_LOG", "False") == "True"
 logger = logging.getLogger(__name__)
@@ -1339,11 +1340,9 @@ class ProductViewSet(viewsets.ModelViewSet):
         )
 
     def _summary_includes_filters(self):
-        return (
-            self.action == "list"
-            and self.request.query_params.get("summary") in ("1", "true", "True")
-            and self.request.query_params.get("include_filters") in ("1", "true", "True")
-        )
+        # Product listings should stay products-only; filters are served by
+        # /api/products/filters/ so category pages do not pay per-product filter cost.
+        return False
 
     def _summary_includes_variants(self):
         return (
@@ -1539,6 +1538,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         the process cache, and the short TTL smooths over cold Render/Neon waits.
         """
         query_start = len(connection.queries) if PRODUCT_SQL_DEBUG_LOG else 0
+        request_start = time.perf_counter()
         limit = _positive_int_query_param(request, "limit", maximum=100)
         has_page_param = request.query_params.get("page") or request.query_params.get("page_size")
         is_summary = request.query_params.get("summary") in ("1", "true", "True")
@@ -1591,9 +1591,10 @@ class ProductViewSet(viewsets.ModelViewSet):
         def log_query_count(response):
             if PRODUCT_SQL_DEBUG_LOG:
                 logger.debug(
-                    "ProductViewSet.list path=%s queries=%s status=%s",
+                    "ProductViewSet.list path=%s queries=%s duration_ms=%.1f status=%s",
                     request.get_full_path(),
                     len(connection.queries) - query_start,
+                    (time.perf_counter() - request_start) * 1000,
                     getattr(response, "status_code", None),
                 )
             return response
@@ -3827,6 +3828,102 @@ class CategoryFiltersView(generics.GenericAPIView):
         
         serializer = FilterTypeSerializer(filter_types, many=True)
         return Response({'filters': serializer.data})
+
+
+class ProductFiltersView(generics.GenericAPIView):
+    """
+    GET /api/products/filters/?category=beds&subcategory=dining-tables
+    Returns cached product filters separately from paginated product cards.
+    """
+    permission_classes = [AllowAny]
+
+    @method_decorator(cache_page(CATEGORY_FILTER_CACHE_TTL))
+    def get(self, request):
+        from django.db.models import Q, Count
+
+        query_start = len(connection.queries) if PRODUCT_SQL_DEBUG_LOG else 0
+        request_start = time.perf_counter()
+        category_slug = (request.query_params.get("category") or "").strip()
+        subcategory_slug = (request.query_params.get("subcategory") or "").strip()
+
+        category = None
+        subcategory = None
+        if subcategory_slug:
+            subcategory = SubCategory.objects.select_related("category").filter(slug=subcategory_slug).first()
+            if not subcategory:
+                return Response({"filters": []})
+            category = subcategory.category
+
+        if category_slug:
+            try:
+                category = Category.objects.get(slug=category_slug)
+            except Category.DoesNotExist:
+                if not subcategory:
+                    return Response({"filters": []})
+
+        if not category and not subcategory:
+            return Response({"filters": []})
+
+        category_filters = CategoryFilter.objects.filter(is_active=True)
+        if subcategory:
+            category_filters = category_filters.filter(Q(subcategory=subcategory) | Q(category=category))
+        else:
+            category_filters = category_filters.filter(
+                Q(category=category) | Q(subcategory__category=category) | Q(subcategory__additional_categories=category)
+            )
+
+        category_filters = category_filters.select_related("filter_type").prefetch_related(
+            Prefetch(
+                "filter_type__options",
+                queryset=FilterOption.objects.filter(is_active=True).order_by("display_order", "name"),
+                to_attr="active_options",
+            )
+        ).distinct().order_by("display_order")
+
+        filter_types = []
+        seen_ids = set()
+        for cf in category_filters:
+            ft = cf.filter_type
+            if ft.is_active and ft.id not in seen_ids:
+                ft.category_option_order = list(cf.option_order or [])
+                filter_types.append(ft)
+                seen_ids.add(ft.id)
+
+        product_scope = Q()
+        if subcategory:
+            product_scope &= Q(product__subcategory=subcategory)
+        elif category:
+            product_scope &= (
+                Q(product__category=category)
+                | Q(product__subcategory__category=category)
+                | Q(product__subcategory__additional_categories=category)
+            )
+
+        base_filter_qs = ProductFilterValue.objects.filter(
+            product_scope,
+            product__in_stock=True,
+            product__is_hidden=False,
+            product__category__is_hidden=False,
+        ).distinct()
+        base_filter_qs = base_filter_qs.filter(Q(product__subcategory__isnull=True) | Q(product__subcategory__is_hidden=False))
+        option_counts = base_filter_qs.values("filter_option").annotate(product_count=Count("product", distinct=True))
+        count_lookup = {row["filter_option"]: row["product_count"] for row in option_counts}
+
+        for ft in filter_types:
+            for option in getattr(ft, "active_options", []):
+                option.product_count = count_lookup.get(option.id, 0)
+
+        serializer = FilterTypeSerializer(filter_types, many=True)
+        response = Response({"filters": serializer.data})
+        if PRODUCT_SQL_DEBUG_LOG:
+            logger.debug(
+                "ProductFiltersView path=%s queries=%s duration_ms=%.1f status=%s",
+                request.get_full_path(),
+                len(connection.queries) - query_start,
+                (time.perf_counter() - request_start) * 1000,
+                response.status_code,
+            )
+        return response
 
 
 class ProductStyleLibraryViewSet(viewsets.ReadOnlyModelViewSet):

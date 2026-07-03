@@ -956,7 +956,7 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
 
     def get_fields(self):
         fields = super().get_fields()
-        include_filters = self._query_flag("include_filters")
+        include_filters = self.context.get("include_product_filter_values") is True
         include_variants = self._query_flag("include_variants")
         include_sizes = self._query_flag("include_sizes")
         include_content = self._query_flag("include_content")
