@@ -174,6 +174,20 @@ def _size_count_subquery():
     )
 
 
+def _slowest_sql_query(query_start):
+    queries = connection.queries[query_start:]
+    if not queries:
+        return None
+    slowest = max(queries, key=lambda query: float(query.get("time") or 0))
+    sql = str(slowest.get("sql") or "").replace("\n", " ")
+    if len(sql) > 500:
+        sql = f"{sql[:500]}..."
+    return {
+        "time_ms": float(slowest.get("time") or 0) * 1000,
+        "sql": sql,
+    }
+
+
 def _with_live_review_summary(queryset):
     return queryset.annotate(
         live_rating=Avg("reviews__rating", filter=Q(reviews__is_visible=True)),
@@ -1559,13 +1573,6 @@ class ProductViewSet(viewsets.ModelViewSet):
         else:
             queryset = queryset.order_by("sort_order", "-created_at")
 
-        has_page_param = self.request.query_params.get("page") or self.request.query_params.get("page_size")
-        if is_summary and not self._summary_includes_total() and not has_page_param:
-            limit = _positive_int_query_param(self.request, "limit", maximum=100)
-            offset = _nonnegative_int_query_param(self.request, "offset")
-            if limit is not None:
-                queryset = queryset[offset : offset + limit]
-
         return queryset
 
     def _invalidate_cache(self):
@@ -1577,8 +1584,26 @@ class ProductViewSet(viewsets.ModelViewSet):
         Cache anonymous storefront product lists briefly. Admin mutations clear
         the process cache, and the short TTL smooths over cold Render/Neon waits.
         """
-        query_start = len(connection.queries) if PRODUCT_SQL_DEBUG_LOG else 0
+        should_profile = (
+            PRODUCT_SQL_DEBUG_LOG
+            or (
+                request.method == "GET"
+                and request.query_params.get("summary") in ("1", "true", "True")
+                and request.query_params.get("limit")
+            )
+        )
+        previous_force_debug_cursor = connection.force_debug_cursor
+        if should_profile:
+            connection.force_debug_cursor = True
+        query_start = len(connection.queries) if should_profile else 0
         request_start = time.perf_counter()
+        timings = {
+            "queryset_ms": 0.0,
+            "count_ms": 0.0,
+            "db_fetch_ms": 0.0,
+            "serializer_ms": 0.0,
+            "filters_generation_ms": 0.0,
+        }
         limit = _positive_int_query_param(request, "limit", maximum=100)
         has_page_param = request.query_params.get("page") or request.query_params.get("page_size")
         is_summary = request.query_params.get("summary") in ("1", "true", "True")
@@ -1595,18 +1620,35 @@ class ProductViewSet(viewsets.ModelViewSet):
         include_total = is_limited_summary and self._summary_includes_total()
 
         def limited_summary_response():
+            queryset_start = time.perf_counter()
             queryset = self.filter_queryset(self.get_queryset())
+            timings["queryset_ms"] += (time.perf_counter() - queryset_start) * 1000
+            offset = _nonnegative_int_query_param(request, "offset")
             if include_total:
+                count_start = time.perf_counter()
                 total = queryset.count()
-                offset = _nonnegative_int_query_param(request, "offset")
-                page = queryset[offset : offset + limit]
-                serializer = self.get_serializer(page, many=True)
-                return Response({"count": total, "results": serializer.data})
-            serializer = self.get_serializer(queryset[:limit], many=True)
-            return Response(serializer.data)
+                timings["count_ms"] += (time.perf_counter() - count_start) * 1000
+                fetch_start = time.perf_counter()
+                page_items = list(queryset[offset : offset + limit])
+                timings["db_fetch_ms"] += (time.perf_counter() - fetch_start) * 1000
+                serializer_start = time.perf_counter()
+                serializer = self.get_serializer(page_items, many=True)
+                data = serializer.data
+                timings["serializer_ms"] += (time.perf_counter() - serializer_start) * 1000
+                return Response({"count": total, "results": data})
+            fetch_start = time.perf_counter()
+            page_items = list(queryset[offset : offset + limit])
+            timings["db_fetch_ms"] += (time.perf_counter() - fetch_start) * 1000
+            serializer_start = time.perf_counter()
+            serializer = self.get_serializer(page_items, many=True)
+            data = serializer.data
+            timings["serializer_ms"] += (time.perf_counter() - serializer_start) * 1000
+            return Response(data)
 
         def page_summary_response():
+            queryset_start = time.perf_counter()
             queryset = self.filter_queryset(self.get_queryset())
+            timings["queryset_ms"] += (time.perf_counter() - queryset_start) * 1000
             page_number = _bounded_int_query_param(request, "page", default=1, minimum=1, maximum=100000)
             page_size = _bounded_int_query_param(
                 request,
@@ -1615,28 +1657,49 @@ class ProductViewSet(viewsets.ModelViewSet):
                 minimum=1,
                 maximum=100,
             )
+            count_start = time.perf_counter()
             total = queryset.count()
+            timings["count_ms"] += (time.perf_counter() - count_start) * 1000
             offset = (page_number - 1) * page_size
-            serializer = self.get_serializer(queryset[offset : offset + page_size], many=True)
+            fetch_start = time.perf_counter()
+            page_items = list(queryset[offset : offset + page_size])
+            timings["db_fetch_ms"] += (time.perf_counter() - fetch_start) * 1000
+            serializer_start = time.perf_counter()
+            serializer = self.get_serializer(page_items, many=True)
+            data = serializer.data
+            timings["serializer_ms"] += (time.perf_counter() - serializer_start) * 1000
             return Response(
                 {
                     "count": total,
                     "page": page_number,
                     "page_size": page_size,
                     "total_pages": max(1, (total + page_size - 1) // page_size),
-                    "results": serializer.data,
+                    "results": data,
                 }
             )
 
         def log_query_count(response):
-            if PRODUCT_SQL_DEBUG_LOG:
-                logger.debug(
-                    "ProductViewSet.list path=%s queries=%s duration_ms=%.1f status=%s",
+            if should_profile:
+                slowest = _slowest_sql_query(query_start)
+                logger.info(
+                    (
+                        "ProductViewSet.list path=%s status=%s total_ms=%.1f queryset_ms=%.1f "
+                        "count_ms=%.1f db_fetch_ms=%.1f serializer_ms=%.1f filters_generation_ms=%.1f "
+                        "queries=%s slowest_sql_ms=%s slowest_sql=%s"
+                    ),
                     request.get_full_path(),
-                    len(connection.queries) - query_start,
-                    (time.perf_counter() - request_start) * 1000,
                     getattr(response, "status_code", None),
+                    (time.perf_counter() - request_start) * 1000,
+                    timings["queryset_ms"],
+                    timings["count_ms"],
+                    timings["db_fetch_ms"],
+                    timings["serializer_ms"],
+                    timings["filters_generation_ms"],
+                    len(connection.queries) - query_start,
+                    f"{slowest['time_ms']:.1f}" if slowest else "0.0",
+                    slowest["sql"] if slowest else "",
                 )
+                connection.force_debug_cursor = previous_force_debug_cursor
             return response
 
         is_admin_request = bool(request.user and request.user.is_authenticated and request.user.is_staff)
@@ -3881,8 +3944,12 @@ class ProductFiltersView(generics.GenericAPIView):
     def get(self, request):
         from django.db.models import Q, Count
 
+        previous_force_debug_cursor = connection.force_debug_cursor
+        if PRODUCT_SQL_DEBUG_LOG:
+            connection.force_debug_cursor = True
         query_start = len(connection.queries) if PRODUCT_SQL_DEBUG_LOG else 0
         request_start = time.perf_counter()
+        filters_start = time.perf_counter()
         category_slug = (request.query_params.get("category") or "").strip()
         subcategory_slug = (request.query_params.get("subcategory") or "").strip()
 
@@ -3891,6 +3958,8 @@ class ProductFiltersView(generics.GenericAPIView):
         if subcategory_slug:
             subcategory = SubCategory.objects.select_related("category").filter(slug=subcategory_slug).first()
             if not subcategory:
+                if PRODUCT_SQL_DEBUG_LOG:
+                    connection.force_debug_cursor = previous_force_debug_cursor
                 return Response({"filters": []})
             category = subcategory.category
 
@@ -3899,9 +3968,13 @@ class ProductFiltersView(generics.GenericAPIView):
                 category = Category.objects.get(slug=category_slug)
             except Category.DoesNotExist:
                 if not subcategory:
+                    if PRODUCT_SQL_DEBUG_LOG:
+                        connection.force_debug_cursor = previous_force_debug_cursor
                     return Response({"filters": []})
 
         if not category and not subcategory:
+            if PRODUCT_SQL_DEBUG_LOG:
+                connection.force_debug_cursor = previous_force_debug_cursor
             return Response({"filters": []})
 
         category_filters = CategoryFilter.objects.filter(is_active=True)
@@ -3956,13 +4029,21 @@ class ProductFiltersView(generics.GenericAPIView):
         serializer = FilterTypeSerializer(filter_types, many=True)
         response = Response({"filters": serializer.data})
         if PRODUCT_SQL_DEBUG_LOG:
+            slowest = _slowest_sql_query(query_start)
             logger.debug(
-                "ProductFiltersView path=%s queries=%s duration_ms=%.1f status=%s",
+                (
+                    "ProductFiltersView path=%s status=%s total_ms=%.1f filters_generation_ms=%.1f "
+                    "queries=%s slowest_sql_ms=%s slowest_sql=%s"
+                ),
                 request.get_full_path(),
-                len(connection.queries) - query_start,
-                (time.perf_counter() - request_start) * 1000,
                 response.status_code,
+                (time.perf_counter() - request_start) * 1000,
+                (time.perf_counter() - filters_start) * 1000,
+                len(connection.queries) - query_start,
+                f"{slowest['time_ms']:.1f}" if slowest else "0.0",
+                slowest["sql"] if slowest else "",
             )
+            connection.force_debug_cursor = previous_force_debug_cursor
         return response
 
 
