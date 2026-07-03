@@ -284,8 +284,13 @@ class Product(models.Model):
             models.Index(fields=["category", "sort_order", "-created_at"], name="prod_cat_order_idx"),
             models.Index(fields=["subcategory", "sort_order", "-created_at"], name="prod_subcat_order_idx"),
             models.Index(fields=["is_hidden", "category"], name="prod_hidden_cat_idx"),
+            models.Index(fields=["is_hidden", "subcategory"], name="prod_hidden_subcat_idx"),
             models.Index(fields=["is_bestseller", "is_hidden"], name="prod_bestseller_idx"),
             models.Index(fields=["is_new", "is_hidden"], name="prod_new_idx"),
+            models.Index(fields=["price"], name="prod_price_idx"),
+            models.Index(fields=["original_price"], name="prod_original_price_idx"),
+            models.Index(fields=["sort_order"], name="prod_sort_order_idx"),
+            models.Index(fields=["-created_at"], name="prod_created_desc_idx"),
         ]
 
 
@@ -300,6 +305,9 @@ class ProductImage(models.Model):
 
     class Meta:
         ordering = ["sort_order", "id"]
+        indexes = [
+            models.Index(fields=["product", "sort_order", "id"], name="prod_img_product_order_idx"),
+        ]
 
 
 class ProductVideo(models.Model):
@@ -323,6 +331,11 @@ class ProductSize(models.Model):
     name = models.CharField(max_length=50)
     description = models.CharField(max_length=255, blank=True)
     price_delta = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["product", "price_delta"], name="prod_size_price_idx"),
+        ]
 
 
 class ProductStyle(models.Model):
@@ -645,6 +658,11 @@ class CategoryFilter(models.Model):
     
     class Meta:
         ordering = ['display_order']
+        indexes = [
+            models.Index(fields=["category", "is_active", "display_order"], name="cat_filter_cat_active_idx"),
+            models.Index(fields=["subcategory", "is_active", "display_order"], name="cat_filter_sub_active_idx"),
+            models.Index(fields=["filter_type", "is_active"], name="cat_filter_type_active_idx"),
+        ]
     
     def __str__(self):
         target = self.subcategory.name if self.subcategory else self.category.name

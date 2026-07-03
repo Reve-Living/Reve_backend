@@ -2,6 +2,7 @@ import uuid
 import os
 import stripe
 import re
+import logging
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import urlencode, urljoin
 
@@ -10,7 +11,7 @@ from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from django.contrib.auth.models import User
 from django.utils.text import slugify
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Avg, BooleanField, Count, DecimalField, IntegerField, OuterRef, Prefetch, Q, Subquery, Case, When, Value
 from django.core.cache import cache
 from django.utils.decorators import method_decorator
@@ -96,9 +97,12 @@ from .payments import (
 
 
 TWOPLACES = Decimal("0.01")
-PRODUCT_LIST_CACHE_TTL = int(os.getenv("PRODUCT_LIST_CACHE_TTL", "30"))
+PRODUCT_LIST_CACHE_TTL = int(os.getenv("PRODUCT_LIST_CACHE_TTL", "300"))
 PRODUCT_DETAIL_CACHE_TTL = int(os.getenv("PRODUCT_DETAIL_CACHE_TTL", "60"))
 CATEGORY_FILTER_CACHE_TTL = int(os.getenv("CATEGORY_FILTER_CACHE_TTL", "300"))
+PRODUCT_LIST_PAGE_SIZE = int(os.getenv("PRODUCT_LIST_PAGE_SIZE", "24"))
+PRODUCT_SQL_DEBUG_LOG = os.getenv("PRODUCT_SQL_DEBUG_LOG", "False") == "True"
+logger = logging.getLogger(__name__)
 
 
 def _has_usable_cache_backend() -> bool:
@@ -130,8 +134,12 @@ def _nonnegative_int_query_param(request, key, maximum=10000):
     return min(value, maximum)
 
 
-def _truthy_query_param(request, key):
-    return request.query_params.get(key) in ("1", "true", "True")
+def _bounded_int_query_param(request, key, default, minimum=1, maximum=100):
+    try:
+        value = int(str(request.query_params.get(key) or "").strip())
+    except (TypeError, ValueError):
+        value = default
+    return min(max(value, minimum), maximum)
 
 
 def _primary_image_subquery():
@@ -1151,6 +1159,30 @@ class ProductViewSet(viewsets.ModelViewSet):
     # Base queryset needed for DRF router basename resolution
     queryset = Product.objects.all()
     permission_classes = [IsAdminOrReadOnly]
+    _non_filter_query_params = {
+        "summary",
+        "admin_summary",
+        "category",
+        "subcategory",
+        "bestseller",
+        "is_new",
+        "slug",
+        "limit",
+        "offset",
+        "page",
+        "page_size",
+        "include_total",
+        "include_filters",
+        "include_sizes",
+        "include_variants",
+        "include_content",
+        "card",
+        "quick",
+        "core",
+        "format",
+        "ordering",
+        "search",
+    }
 
     # Prefetch groups tuned for list vs detail
     _size_list_prefetch = Prefetch(
@@ -1275,6 +1307,30 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def _base_queryset(self):
         return Product.objects.select_related("category", "subcategory")
+
+    def _get_category_scope_ids(self, category_slug):
+        cache_key = f"product-category-scope:v1:{category_slug}"
+        if _has_usable_cache_backend():
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return cached
+
+        category_id = Category.objects.filter(slug=category_slug).values_list("id", flat=True).first()
+        if not category_id:
+            result = (None, [])
+        else:
+            linked_subcategory_ids = list(
+                SubCategory.objects.filter(
+                    Q(category_id=category_id) | Q(additional_categories__id=category_id)
+                )
+                .values_list("id", flat=True)
+                .distinct()
+            )
+            result = (category_id, linked_subcategory_ids)
+
+        if _has_usable_cache_backend():
+            cache.set(cache_key, result, CATEGORY_FILTER_CACHE_TTL)
+        return result
 
     def _is_admin_summary_request(self):
         return (
@@ -1429,17 +1485,9 @@ class ProductViewSet(viewsets.ModelViewSet):
         slug = self.request.query_params.get("slug")
         
         if category:
-            category_id = Category.objects.filter(slug=category).values_list("id", flat=True).first()
+            category_id, linked_subcategory_ids = self._get_category_scope_ids(category)
             if not category_id:
                 return queryset.none()
-
-            linked_subcategory_ids = list(
-                SubCategory.objects.filter(
-                    Q(category_id=category_id) | Q(additional_categories__id=category_id)
-                )
-                .values_list("id", flat=True)
-                .distinct()
-            )
 
             category_filter = Q(category_id=category_id)
             if linked_subcategory_ids:
@@ -1455,23 +1503,25 @@ class ProductViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(slug=slug)
         
         # Apply dynamic filters from filter system only when relevant query params exist.
-        request_keys = set(self.request.query_params.keys())
-        filter_types = FilterType.objects.filter(is_active=True, slug__in=request_keys)
-        for ft in filter_types:
-            filter_values = self.request.query_params.get(ft.slug)
-            if filter_values:
-                option_slugs = filter_values.split(',')
-                queryset = queryset.filter(
-                    filter_values__filter_option__slug__in=option_slugs,
-                    filter_values__filter_option__filter_type=ft
-                ).distinct()
+        filter_param_keys = set(self.request.query_params.keys()) - self._non_filter_query_params
+        if filter_param_keys:
+            filter_types = FilterType.objects.filter(is_active=True, slug__in=filter_param_keys).only("id", "slug")
+            for ft in filter_types:
+                filter_values = self.request.query_params.get(ft.slug)
+                if filter_values:
+                    option_slugs = filter_values.split(',')
+                    queryset = queryset.filter(
+                        filter_values__filter_option__slug__in=option_slugs,
+                        filter_values__filter_option__filter_type=ft
+                    ).distinct()
         
         if category and not subcategory:
             queryset = queryset.order_by("subcategory__sort_order", "subcategory__name", "sort_order", "-created_at")
         else:
             queryset = queryset.order_by("sort_order", "-created_at")
 
-        if is_summary and not self._summary_includes_total():
+        has_page_param = self.request.query_params.get("page") or self.request.query_params.get("page_size")
+        if is_summary and not self._summary_includes_total() and not has_page_param:
             limit = _positive_int_query_param(self.request, "limit", maximum=100)
             offset = _nonnegative_int_query_param(self.request, "offset")
             if limit is not None:
@@ -1488,54 +1538,21 @@ class ProductViewSet(viewsets.ModelViewSet):
         Cache anonymous storefront product lists briefly. Admin mutations clear
         the process cache, and the short TTL smooths over cold Render/Neon waits.
         """
+        query_start = len(connection.queries) if PRODUCT_SQL_DEBUG_LOG else 0
         limit = _positive_int_query_param(request, "limit", maximum=100)
+        has_page_param = request.query_params.get("page") or request.query_params.get("page_size")
+        is_summary = request.query_params.get("summary") in ("1", "true", "True")
         is_limited_summary = (
             limit is not None
-            and request.query_params.get("summary") in ("1", "true", "True")
+            and is_summary
+            and not self._is_admin_summary_request()
+        )
+        is_page_summary = bool(
+            has_page_param
+            and is_summary
             and not self._is_admin_summary_request()
         )
         include_total = is_limited_summary and self._summary_includes_total()
-        is_card_summary = is_limited_summary and _truthy_query_param(request, "card")
-
-        def serialize_card_product(product):
-            primary_image_url = str(getattr(product, "primary_image_url", "") or "").strip()
-            return {
-                "id": product.id,
-                "name": product.name,
-                "slug": product.slug,
-                "category": product.category_id,
-                "subcategory": product.subcategory_id,
-                "price": product.price,
-                "original_price": product.original_price,
-                "min_size_price": getattr(product, "min_size_price", None),
-                "size_count": getattr(product, "size_count", None),
-                "stock_status": product.stock_status,
-                "in_stock": product.in_stock,
-                "is_hidden": product.is_hidden,
-                "is_bestseller": product.is_bestseller,
-                "is_new": product.is_new,
-                "sort_order": product.sort_order,
-                "rating": product.rating,
-                "review_count": product.review_count,
-                "short_description": product.short_description,
-                "category_name": product.category.name if product.category_id and product.category else "",
-                "subcategory_name": product.subcategory.name if product.subcategory_id and product.subcategory else "",
-                "category_slug": product.category.slug if product.category_id and product.category else "",
-                "subcategory_slug": product.subcategory.slug if product.subcategory_id and product.subcategory else "",
-                "imported_from_product": product.imported_from_product_id,
-                "images": (
-                    [
-                        {
-                            "id": 0,
-                            "url": primary_image_url,
-                            "alt_text": product.name or "",
-                            "flip_horizontal": bool(getattr(product, "primary_image_flip_horizontal", False)),
-                        }
-                    ]
-                    if primary_image_url
-                    else []
-                ),
-            }
 
         def limited_summary_response():
             queryset = self.filter_queryset(self.get_queryset())
@@ -1545,10 +1562,42 @@ class ProductViewSet(viewsets.ModelViewSet):
                 page = queryset[offset : offset + limit]
                 serializer = self.get_serializer(page, many=True)
                 return Response({"count": total, "results": serializer.data})
-            if is_card_summary:
-                return Response([serialize_card_product(product) for product in queryset[:limit]])
             serializer = self.get_serializer(queryset[:limit], many=True)
             return Response(serializer.data)
+
+        def page_summary_response():
+            queryset = self.filter_queryset(self.get_queryset())
+            page_number = _bounded_int_query_param(request, "page", default=1, minimum=1, maximum=100000)
+            page_size = _bounded_int_query_param(
+                request,
+                "page_size",
+                default=PRODUCT_LIST_PAGE_SIZE,
+                minimum=1,
+                maximum=100,
+            )
+            total = queryset.count()
+            offset = (page_number - 1) * page_size
+            serializer = self.get_serializer(queryset[offset : offset + page_size], many=True)
+            return Response(
+                {
+                    "count": total,
+                    "page": page_number,
+                    "page_size": page_size,
+                    "total_pages": max(1, (total + page_size - 1) // page_size),
+                    "results": serializer.data,
+                }
+            )
+
+        def log_query_count(response):
+            if PRODUCT_SQL_DEBUG_LOG:
+                logger.debug(
+                    "ProductViewSet.list path=%s queries=%s status=%s",
+                    request.get_full_path(),
+                    len(connection.queries) - query_start,
+                    getattr(response, "status_code", None),
+                )
+            return response
+
         is_admin_request = bool(request.user and request.user.is_authenticated and request.user.is_staff)
         can_cache = (
             request.method == "GET"
@@ -1557,23 +1606,27 @@ class ProductViewSet(viewsets.ModelViewSet):
             and _has_usable_cache_backend()
         )
         if not can_cache:
+            if is_page_summary:
+                return log_query_count(page_summary_response())
             if is_limited_summary:
-                return limited_summary_response()
-            return super().list(request, *args, **kwargs)
+                return log_query_count(limited_summary_response())
+            return log_query_count(super().list(request, *args, **kwargs))
 
         query_string = urlencode(sorted(request.query_params.lists()), doseq=True)
         cache_key = f"product-list:v5:{query_string}"
         cached_data = cache.get(cache_key)
         if cached_data is not None:
-            return Response(cached_data)
+            return log_query_count(Response(cached_data))
 
-        if is_limited_summary:
+        if is_page_summary:
+            response = page_summary_response()
+        elif is_limited_summary:
             response = limited_summary_response()
         else:
             response = super().list(request, *args, **kwargs)
         if response.status_code == status.HTTP_200_OK:
             cache.set(cache_key, response.data, PRODUCT_LIST_CACHE_TTL)
-        return response
+        return log_query_count(response)
 
     def retrieve(self, request, *args, **kwargs):
         is_admin_request = bool(request.user and request.user.is_authenticated and request.user.is_staff)
