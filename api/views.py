@@ -394,6 +394,52 @@ def _get_lowest_google_feed_price(product, sizes=None) -> Decimal:
     return min(prices)
 
 
+def _get_google_feed_product_text(product) -> str:
+    category_name = getattr(getattr(product, "category", None), "name", "")
+    subcategory_name = getattr(getattr(product, "subcategory", None), "name", "")
+    return " ".join(
+        str(value or "")
+        for value in [
+            getattr(product, "name", ""),
+            getattr(product, "slug", ""),
+            category_name,
+            subcategory_name,
+            getattr(product, "short_description", ""),
+            getattr(product, "description", ""),
+        ]
+    ).lower()
+
+
+def _get_google_feed_extra_attributes(product, materials) -> dict:
+    product_text = _get_google_feed_product_text(product)
+    is_upholstered = "upholstered" in product_text
+    is_ottoman = "ottoman" in product_text
+    is_zoe = "zoe" in product_text
+
+    frame_material = ""
+    headboard_material = ""
+    number_of_drawers = ""
+
+    if is_zoe:
+        frame_material = "Solid Rubberwood"
+    elif is_upholstered:
+        frame_material = "Engineered Wood"
+
+    if materials:
+        headboard_material = ", ".join(materials)
+    elif is_zoe:
+        headboard_material = "Fabric"
+
+    if is_ottoman:
+        number_of_drawers = "0"
+
+    return {
+        "frame_material": frame_material,
+        "headboard_material": headboard_material,
+        "number_of_drawers": number_of_drawers,
+    }
+
+
 def _build_google_feed_item_xml(
     product,
     size=None,
@@ -432,10 +478,12 @@ def _build_google_feed_item_xml(
     materials = []
     if fabrics:
         materials = [f.name for f in fabrics if f.name]
+    headboard_materials = materials[:]
     if not materials and hasattr(product, "description"):
         # Fallback: try to extract from description
         materials = ["Engineered Wood & Fabric"]
     material_text = ", ".join(materials) if materials else ""
+    extra_attributes = _get_google_feed_extra_attributes(product, headboard_materials)
     
     # Collect color info
     colors = getattr(product, "_prefetched_colors", [])
@@ -480,6 +528,13 @@ def _build_google_feed_item_xml(
     # Add material
     if material_text:
         lines.append(f"      <g:material>{escape(material_text)}</g:material>")
+    
+    if extra_attributes["frame_material"]:
+        lines.append(f"      <g:frame_material>{escape(extra_attributes['frame_material'])}</g:frame_material>")
+    if extra_attributes["headboard_material"]:
+        lines.append(f"      <g:headboard_material>{escape(extra_attributes['headboard_material'])}</g:headboard_material>")
+    if extra_attributes["number_of_drawers"]:
+        lines.append(f"      <g:number_of_drawers>{escape(extra_attributes['number_of_drawers'])}</g:number_of_drawers>")
     
     # Add color
     if color_text:
