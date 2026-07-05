@@ -25,6 +25,8 @@ class Category(models.Model):
     meta_title = models.CharField(max_length=255, blank=True, default="")
     meta_description = models.TextField(blank=True, default="")
     sort_order = models.IntegerField(default=0)
+    discount_override_enabled = models.BooleanField(default=False)
+    discount_percentage = models.PositiveIntegerField(default=0)
 
     def __str__(self) -> str:
         return self.name
@@ -48,6 +50,8 @@ class SubCategory(models.Model):
     meta_title = models.CharField(max_length=255, blank=True, default="")
     meta_description = models.TextField(blank=True, default="")
     sort_order = models.IntegerField(default=0)
+    discount_override_enabled = models.BooleanField(default=False)
+    discount_percentage = models.PositiveIntegerField(default=0)
 
     def __str__(self) -> str:
         return f"{self.category.name} -> {self.name}"

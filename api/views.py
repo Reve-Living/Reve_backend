@@ -1042,8 +1042,12 @@ class CollectionViewSet(viewsets.ModelViewSet):
                     "created_at",
                     "category__name",
                     "category__slug",
+                    "category__discount_override_enabled",
+                    "category__discount_percentage",
                     "subcategory__name",
                     "subcategory__slug",
+                    "subcategory__discount_override_enabled",
+                    "subcategory__discount_percentage",
                 )
                 .prefetch_related(
                     "images",
@@ -1297,6 +1301,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         "imported_from_product_id",
         "price",
         "original_price",
+        "discount_percentage",
         "short_description",
         "stock_status",
         "in_stock",
@@ -1446,8 +1451,12 @@ class ProductViewSet(viewsets.ModelViewSet):
                     *self._admin_picker_only_fields,
                     "category__name",
                     "category__slug",
+                    "category__discount_override_enabled",
+                    "category__discount_percentage",
                     "subcategory__name",
                     "subcategory__slug",
+                    "subcategory__discount_override_enabled",
+                    "subcategory__discount_percentage",
                 )
             )
         elif is_admin_summary:
@@ -1491,7 +1500,17 @@ class ProductViewSet(viewsets.ModelViewSet):
                     min_size_price=Subquery(min_size_price_subquery, output_field=DecimalField(max_digits=10, decimal_places=2)),
                     size_count=Subquery(size_count_subquery, output_field=IntegerField()),
                 )
-                .only(*summary_only_fields, "category__name", "category__slug", "subcategory__name", "subcategory__slug")
+                .only(
+                    *summary_only_fields,
+                    "category__name",
+                    "category__slug",
+                    "category__discount_override_enabled",
+                    "category__discount_percentage",
+                    "subcategory__name",
+                    "subcategory__slug",
+                    "subcategory__discount_override_enabled",
+                    "subcategory__discount_percentage",
+                )
             )
         else:
             if self._is_quick_detail_request():
@@ -1516,8 +1535,12 @@ class ProductViewSet(viewsets.ModelViewSet):
                         *self._list_only_fields,
                         "category__name",
                         "category__slug",
+                        "category__discount_override_enabled",
+                        "category__discount_percentage",
                         "subcategory__name",
                         "subcategory__slug",
+                        "subcategory__discount_override_enabled",
+                        "subcategory__discount_percentage",
                     )
                 )
         is_admin_request = bool(self.request.user and self.request.user.is_authenticated and self.request.user.is_staff)

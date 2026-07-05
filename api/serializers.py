@@ -52,6 +52,34 @@ class ProductReviewSummaryMixin:
         return int(value or 0)
 
 
+class ProductDiscountDisplayMixin:
+    discount_percentage = serializers.SerializerMethodField()
+
+    def get_discount_percentage(self, obj):
+        request = self.context.get("request")
+        is_admin_request = bool(
+            request
+            and (
+                getattr(request.user, "is_staff", False)
+                or request.headers.get("Authorization")
+            )
+        )
+        if is_admin_request:
+            return int(getattr(obj, "discount_percentage", 0) or 0)
+
+        subcategory = getattr(obj, "subcategory", None)
+        subcategory_discount = int(getattr(subcategory, "discount_percentage", 0) or 0) if subcategory else 0
+        if subcategory and getattr(subcategory, "discount_override_enabled", False) and subcategory_discount > 0:
+            return min(subcategory_discount, 100)
+
+        category = getattr(obj, "category", None)
+        category_discount = int(getattr(category, "discount_percentage", 0) or 0) if category else 0
+        if category and getattr(category, "discount_override_enabled", False) and category_discount > 0:
+            return min(category_discount, 100)
+
+        return int(getattr(obj, "discount_percentage", 0) or 0)
+
+
 def _get_first_related_item(obj, relation_name):
     prefetched_cache = getattr(obj, "_prefetched_objects_cache", {}) or {}
     prefetched_items = prefetched_cache.get(relation_name)
@@ -491,7 +519,7 @@ class DimensionTemplateSerializer(serializers.ModelSerializer):
         fields = ("id", "name", "slug", "notes", "is_default", "rows")
 
 
-class ProductSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
+class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, serializers.ModelSerializer):
     images = ProductImageSerializer(many=True, read_only=True)
     videos = ProductVideoSerializer(many=True, read_only=True)
     colors = ProductColorSerializer(many=True, read_only=True)
@@ -767,7 +795,7 @@ class ProductSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
         return 4  # requirement: wingback headboard adds approx 4 cm width
 
 
-class ProductQuickSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
+class ProductQuickSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, serializers.ModelSerializer):
     """Single-query product content used for an immediate product-page paint."""
 
     images = serializers.SerializerMethodField()
@@ -844,7 +872,7 @@ class ProductQuickSerializer(ProductReviewSummaryMixin, serializers.ModelSeriali
 
 
 # Lighter serializer for list views to keep responses smaller
-class ProductListSerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
+class ProductListSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, serializers.ModelSerializer):
     images = serializers.SerializerMethodField()
     sizes = ProductSizeSerializer(many=True, read_only=True)
     price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
@@ -931,7 +959,7 @@ class ProductListSerializer(ProductReviewSummaryMixin, serializers.ModelSerializ
         return _serialize_filter_values(obj)
 
 
-class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSerializer):
+class ProductSummarySerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, serializers.ModelSerializer):
     images = serializers.SerializerMethodField()
     price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     original_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
@@ -1026,6 +1054,7 @@ class ProductSummarySerializer(ProductReviewSummaryMixin, serializers.ModelSeria
             "subcategory",
             "price",
             "original_price",
+            "discount_percentage",
             "min_size_price",
             "size_count",
             "stock_status",
