@@ -1338,6 +1338,50 @@ class ProductViewSet(viewsets.ModelViewSet):
     def _base_queryset(self):
         return Product.objects.select_related("category", "subcategory")
 
+    @action(detail=False, methods=["get"], permission_classes=[AllowAny], url_path="seo")
+    def seo(self, request):
+        """Compact product metadata used to generate crawlable product HTML at build time."""
+        products = (
+            Product.objects.filter(
+                is_hidden=False,
+                category__is_hidden=False,
+            )
+            .filter(Q(subcategory__isnull=True) | Q(subcategory__is_hidden=False))
+            .annotate(primary_image_url=Subquery(_primary_image_subquery()))
+            .values(
+                "name",
+                "slug",
+                "meta_title",
+                "meta_description",
+                "short_description",
+                "description",
+                "price",
+                "stock_status",
+                "in_stock",
+                "primary_image_url",
+            )
+            .order_by("id")
+        )
+        backend_base_url = request.build_absolute_uri("/")
+        data = []
+        for product in products:
+            stock_status = Product.normalize_stock_status(
+                product["stock_status"],
+                fallback_in_stock=bool(product["in_stock"]),
+            )
+            data.append(
+                {
+                    **product,
+                    "price": str(product["price"]),
+                    "stock_status": stock_status,
+                    "primary_image_url": _to_absolute_url(
+                        product["primary_image_url"],
+                        backend_base_url,
+                    ),
+                }
+            )
+        return Response(data)
+
     def _get_category_scope_ids(self, category_slug):
         cache_key = f"product-category-scope:v1:{category_slug}"
         if _has_usable_cache_backend():
