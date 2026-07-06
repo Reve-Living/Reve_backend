@@ -1830,7 +1830,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             return log_query_count(super().list(request, *args, **kwargs))
 
         query_string = urlencode(sorted(request.query_params.lists()), doseq=True)
-        cache_key = f"product-list:v5:{query_string}"
+        cache_key = f"product-list:v6:{query_string}"
         cached_data = cache.get(cache_key)
         if cached_data is not None:
             return log_query_count(Response(cached_data))
