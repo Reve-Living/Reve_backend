@@ -2267,6 +2267,35 @@ class ProductListCachingTests(TestCase):
         mock_cache_get.assert_called_once()
         mock_cache_set.assert_called_once()
 
+    def test_category_discount_overrides_subcategory_and_product_discounts(self):
+        category = Category.objects.create(
+            name="Mattresses",
+            slug="mattresses-category-discount",
+            discount_override_enabled=True,
+            discount_percentage=30,
+        )
+        subcategory = SubCategory.objects.create(
+            category=category,
+            name="Memory Foam",
+            slug="memory-foam-category-discount",
+            discount_override_enabled=True,
+            discount_percentage=20,
+        )
+        product = Product.objects.create(
+            name="Category Discount Mattress",
+            slug="category-discount-mattress",
+            category=category,
+            subcategory=subcategory,
+            price="169.00",
+            original_price="219.00",
+            discount_percentage=15,
+        )
+
+        response = APIClient().get(f"/api/products/?slug={product.slug}&summary=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data[0]["discount_percentage"], 30)
+
     def test_admin_product_update_can_return_no_content(self):
         admin_user = User.objects.create_user(
             username="admin-no-content-update",

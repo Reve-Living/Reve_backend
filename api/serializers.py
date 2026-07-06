@@ -67,15 +67,15 @@ class ProductDiscountDisplayMixin:
         if is_admin_request:
             return int(getattr(obj, "discount_percentage", 0) or 0)
 
-        subcategory = getattr(obj, "subcategory", None)
-        if subcategory and getattr(subcategory, "discount_override_enabled", False):
-            subcategory_discount = int(getattr(subcategory, "discount_percentage", 0) or 0)
-            return min(subcategory_discount, 100)
-
         category = getattr(obj, "category", None)
         if category and getattr(category, "discount_override_enabled", False):
             category_discount = int(getattr(category, "discount_percentage", 0) or 0)
             return min(category_discount, 100)
+
+        subcategory = getattr(obj, "subcategory", None)
+        if subcategory and getattr(subcategory, "discount_override_enabled", False):
+            subcategory_discount = int(getattr(subcategory, "discount_percentage", 0) or 0)
+            return min(subcategory_discount, 100)
 
         return int(getattr(obj, "discount_percentage", 0) or 0)
 
