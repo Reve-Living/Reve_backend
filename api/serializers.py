@@ -68,13 +68,13 @@ class ProductDiscountDisplayMixin:
             return int(getattr(obj, "discount_percentage", 0) or 0)
 
         subcategory = getattr(obj, "subcategory", None)
-        subcategory_discount = int(getattr(subcategory, "discount_percentage", 0) or 0) if subcategory else 0
-        if subcategory and getattr(subcategory, "discount_override_enabled", False) and subcategory_discount > 0:
+        if subcategory and getattr(subcategory, "discount_override_enabled", False):
+            subcategory_discount = int(getattr(subcategory, "discount_percentage", 0) or 0)
             return min(subcategory_discount, 100)
 
         category = getattr(obj, "category", None)
-        category_discount = int(getattr(category, "discount_percentage", 0) or 0) if category else 0
-        if category and getattr(category, "discount_override_enabled", False) and category_discount > 0:
+        if category and getattr(category, "discount_override_enabled", False):
+            category_discount = int(getattr(category, "discount_percentage", 0) or 0)
             return min(category_discount, 100)
 
         return int(getattr(obj, "discount_percentage", 0) or 0)
