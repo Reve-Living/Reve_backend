@@ -2294,7 +2294,8 @@ class ProductListCachingTests(TestCase):
         response = APIClient().get(f"/api/products/?slug={product.slug}&summary=1")
 
         self.assertEqual(response.status_code, 200)
-    self.assertEqual(response.data[0]["discount_percentage"], 20)
+        self.assertEqual(response.data[0]["discount_percentage"], 20)
+        self.assertEqual(response.data[0]["effective_discount_percentage"], 20)
 
     def test_admin_product_update_can_return_no_content(self):
         admin_user = User.objects.create_user(

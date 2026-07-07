@@ -54,6 +54,7 @@ class ProductReviewSummaryMixin:
 
 class ProductDiscountDisplayMixin:
     discount_percentage = serializers.SerializerMethodField()
+    effective_discount_percentage = serializers.SerializerMethodField()
 
     def _get_effective_public_discount_percentage(self, obj):
         category = getattr(obj, "category", None)
@@ -78,6 +79,9 @@ class ProductDiscountDisplayMixin:
         if is_admin_request:
             return int(getattr(obj, "discount_percentage", 0) or 0)
 
+        return self._get_effective_public_discount_percentage(obj)
+
+    def get_effective_discount_percentage(self, obj):
         return self._get_effective_public_discount_percentage(obj)
 
 
@@ -573,6 +577,7 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
             "price",
             "original_price",
             "discount_percentage",
+            "effective_discount_percentage",
             "description",
             "short_description",
             "features",
@@ -837,6 +842,7 @@ class ProductQuickSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMi
             "price",
             "original_price",
             "discount_percentage",
+            "effective_discount_percentage",
             "description",
             "short_description",
             "features",
@@ -901,6 +907,8 @@ class ProductListSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMix
             "price",
             "original_price",
             "discount_percentage",
+            "effective_discount_percentage",
+            "effective_discount_percentage",
             "stock_status",
             "in_stock",
             "is_hidden",
