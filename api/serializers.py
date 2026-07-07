@@ -55,6 +55,17 @@ class ProductReviewSummaryMixin:
 class ProductDiscountDisplayMixin:
     discount_percentage = serializers.SerializerMethodField()
 
+    def _get_effective_public_discount_percentage(self, obj):
+        category = getattr(obj, "category", None)
+        if category and getattr(category, "discount_override_enabled", False):
+            return int(getattr(category, "discount_percentage", 0) or 0)
+
+        subcategory = getattr(obj, "subcategory", None)
+        if subcategory and getattr(subcategory, "discount_override_enabled", False):
+            return int(getattr(subcategory, "discount_percentage", 0) or 0)
+
+        return int(getattr(obj, "discount_percentage", 0) or 0)
+
     def get_discount_percentage(self, obj):
         request = self.context.get("request")
         is_admin_request = bool(
@@ -67,7 +78,7 @@ class ProductDiscountDisplayMixin:
         if is_admin_request:
             return int(getattr(obj, "discount_percentage", 0) or 0)
 
-        return 30
+        return self._get_effective_public_discount_percentage(obj)
 
 
 def _get_first_related_item(obj, relation_name):

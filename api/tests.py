@@ -2272,14 +2272,14 @@ class ProductListCachingTests(TestCase):
             name="Mattresses",
             slug="mattresses-category-discount",
             discount_override_enabled=True,
-            discount_percentage=30,
+            discount_percentage=20,
         )
         subcategory = SubCategory.objects.create(
             category=category,
             name="Memory Foam",
             slug="memory-foam-category-discount",
             discount_override_enabled=True,
-            discount_percentage=20,
+            discount_percentage=30,
         )
         product = Product.objects.create(
             name="Category Discount Mattress",
@@ -2294,7 +2294,7 @@ class ProductListCachingTests(TestCase):
         response = APIClient().get(f"/api/products/?slug={product.slug}&summary=1")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data[0]["discount_percentage"], 30)
+    self.assertEqual(response.data[0]["discount_percentage"], 20)
 
     def test_admin_product_update_can_return_no_content(self):
         admin_user = User.objects.create_user(
