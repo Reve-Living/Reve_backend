@@ -52,7 +52,7 @@ class ProductReviewSummaryMixin:
         return int(value or 0)
 
 
-class ProductDiscountDisplayMixin:
+class ProductDiscountDisplayMixin(serializers.Serializer):
     discount_percentage = serializers.SerializerMethodField()
     effective_discount_percentage = serializers.SerializerMethodField()
 
