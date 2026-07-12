@@ -63,6 +63,7 @@ from .serializers import (
     ProductSerializer,
     ProductQuickSerializer,
     ProductSummarySerializer,
+    ProductAdminDetailSerializer,
     ProductAdminListSerializer,
     ProductAdminPickerSerializer,
     ProductWriteSerializer,
@@ -1199,6 +1200,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         "card",
         "quick",
         "core",
+        "admin_detail",
         "format",
         "ordering",
         "search",
@@ -1262,6 +1264,33 @@ class ProductViewSet(viewsets.ModelViewSet):
             .order_by("sort_order", "-created_at"),
             to_attr="prefetched_suggested_products",
         ),
+    ]
+    _admin_detail_prefetches = [
+        "images",
+        "videos",
+        _size_list_prefetch,
+        _filter_values_list_prefetch,
+        "colors",
+        "styles",
+        "fabrics",
+        Prefetch(
+            "mattresses",
+            queryset=ProductMattress.objects.only(
+                "id",
+                "product_id",
+                "source_product_id",
+                "name",
+                "description",
+                "image_url",
+                "price",
+                "enable_bunk_positions",
+                "price_top",
+                "price_bottom",
+                "price_both",
+                "is_hidden",
+            ),
+        ),
+        Prefetch("suggested_products", queryset=Product.objects.only("id")),
     ]
     _list_only_fields = [
         "id",
@@ -1462,9 +1491,20 @@ class ProductViewSet(viewsets.ModelViewSet):
     def _is_quick_detail_request(self):
         return self.request.query_params.get("quick") in ("1", "true", "True")
 
+    def _is_admin_detail_request(self):
+        return (
+            self.action == "retrieve"
+            and self.request.query_params.get("admin_detail") in ("1", "true", "True")
+            and self.request.user
+            and self.request.user.is_authenticated
+            and self.request.user.is_staff
+        )
+
     def get_serializer_class(self):
         if self._is_quick_detail_request():
             return ProductQuickSerializer
+        if self._is_admin_detail_request():
+            return ProductAdminDetailSerializer
         if self._is_admin_picker_request():
             return ProductAdminPickerSerializer
         if self._is_admin_summary_request():
@@ -1561,7 +1601,9 @@ class ProductViewSet(viewsets.ModelViewSet):
                 prefetches = []
             else:
                 prefetches = self._list_prefetches if is_list else (
-                    self._core_detail_prefetches if self._is_core_detail_request() else self._detail_prefetches
+                    self._admin_detail_prefetches if self._is_admin_detail_request() else (
+                        self._core_detail_prefetches if self._is_core_detail_request() else self._detail_prefetches
+                    )
                 )
             queryset = self._base_queryset().prefetch_related(*prefetches)
             if self._is_quick_detail_request():
@@ -1866,6 +1908,41 @@ class ProductViewSet(viewsets.ModelViewSet):
         if response.status_code == status.HTTP_200_OK:
             cache.set(cache_key, response.data, PRODUCT_DETAIL_CACHE_TTL)
         return response
+
+    @action(detail=False, methods=["post"], permission_classes=[IsAdminUser], url_path="delete-fabric")
+    def delete_fabric(self, request):
+        fabric_name = str(request.data.get("name") or "").strip()
+        raw_product_ids = request.data.get("product_ids") or []
+
+        if not fabric_name:
+            raise ValidationError({"name": "Fabric name is required."})
+        if not isinstance(raw_product_ids, list):
+            raise ValidationError({"product_ids": "Product IDs must be a list."})
+
+        product_ids = []
+        for raw_id in raw_product_ids:
+            try:
+                product_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if product_id > 0 and product_id not in product_ids:
+                product_ids.append(product_id)
+
+        if not product_ids:
+            raise ValidationError({"product_ids": "Select at least one product."})
+
+        queryset = ProductFabric.objects.filter(product_id__in=product_ids, name__iexact=fabric_name)
+        affected_product_ids = list(queryset.values_list("product_id", flat=True).distinct())
+        deleted_count, _ = queryset.delete()
+
+        self._invalidate_cache()
+        return Response(
+            {
+                "deleted_count": deleted_count,
+                "product_count": len(affected_product_ids),
+                "product_ids": affected_product_ids,
+            }
+        )
 
     def create(self, request, *args, **kwargs):
         data = request.data.copy()

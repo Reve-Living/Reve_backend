@@ -481,6 +481,24 @@ class ProductMattressSerializer(serializers.ModelSerializer):
         )
 
 
+class ProductAdminMattressOverrideSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductMattress
+        fields = (
+            "id",
+            "name",
+            "description",
+            "image_url",
+            "price",
+            "enable_bunk_positions",
+            "price_top",
+            "price_bottom",
+            "price_both",
+            "is_hidden",
+            "source_product",
+        )
+
+
 class DimensionRowSerializer(serializers.ModelSerializer):
     class Meta:
         model = DimensionRow
@@ -791,6 +809,31 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
 
     def get_wingback_width_delta_cm(self, obj):
         return 4  # requirement: wingback headboard adds approx 4 cm width
+
+
+class ProductAdminDetailSerializer(ProductSerializer):
+    mattresses = ProductAdminMattressOverrideSerializer(many=True, read_only=True)
+    filter_values = serializers.SerializerMethodField()
+
+    class Meta(ProductSerializer.Meta):
+        fields = tuple(
+            field
+            for field in ProductSerializer.Meta.fields
+            if field
+            not in {
+                "filters",
+                "computed_dimensions",
+                "dimension_template",
+                "dimension_template_name",
+                "wingback_width_delta_cm",
+                "suggested_products_data",
+                "rating",
+                "review_count",
+            }
+        ) + ("filter_values",)
+
+    def get_filter_values(self, obj):
+        return _serialize_filter_values(obj)
 
 
 class ProductQuickSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, serializers.ModelSerializer):
