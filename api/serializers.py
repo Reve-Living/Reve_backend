@@ -569,7 +569,6 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
         if self._query_flag("core"):
             fields.pop("suggested_products", None)
             fields.pop("suggested_products_data", None)
-            fields.pop("mattresses", None)
             fields.pop("filters", None)
             fields.pop("videos", None)
         return fields

@@ -1247,6 +1247,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         "colors",
         "styles",
         "fabrics",
+        "mattresses",
         "dimension_template_link__template__rows",
     ]
     _detail_prefetches = ["images"] + _list_prefetches + [
