@@ -4,6 +4,7 @@ import stripe
 import re
 import logging
 import time
+import threading
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import urlencode, urljoin
 
@@ -1738,9 +1739,111 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         return queryset
 
-    def _invalidate_cache(self):
-        """Drop cached product lists after admin changes."""
+    def _product_list_cache_key(self, params):
+        return f"product-list:v6:{urlencode(sorted(params.items()), doseq=True)}"
+
+    def _summary_queryset_for_cache(self):
+        primary_image_subquery = _primary_image_subquery()
+        primary_image_flip_subquery = _primary_image_flip_subquery()
+        min_size_price_subquery = _min_size_price_subquery()
+        size_count_subquery = _size_count_subquery()
+        return (
+            Product.objects.select_related("category", "subcategory")
+            .filter(is_hidden=False, category__is_hidden=False)
+            .filter(Q(subcategory__isnull=True) | Q(subcategory__is_hidden=False))
+            .annotate(
+                primary_image_url=Subquery(primary_image_subquery),
+                primary_image_flip_horizontal=Subquery(primary_image_flip_subquery, output_field=BooleanField()),
+                min_size_price=Subquery(min_size_price_subquery, output_field=DecimalField(max_digits=10, decimal_places=2)),
+                size_count=Subquery(size_count_subquery, output_field=IntegerField()),
+            )
+            .only(
+                *self._summary_only_fields,
+                "category__name",
+                "category__slug",
+                "category__discount_override_enabled",
+                "category__discount_percentage",
+                "subcategory__name",
+                "subcategory__slug",
+                "subcategory__discount_override_enabled",
+                "subcategory__discount_percentage",
+            )
+        )
+
+    def _cache_first_summary_page(self, params):
+        if not _has_usable_cache_backend() or PRODUCT_LIST_CACHE_TTL <= 0:
+            return
+
+        queryset = self._summary_queryset_for_cache()
+        category_slug = params.get("category")
+        subcategory_slug = params.get("subcategory")
+
+        if category_slug:
+            category_id, linked_subcategory_ids = self._get_category_scope_ids(category_slug)
+            if not category_id:
+                return
+            category_filter = Q(category_id=category_id)
+            if linked_subcategory_ids:
+                category_filter |= Q(subcategory_id__in=linked_subcategory_ids)
+            queryset = queryset.filter(category_filter).order_by(
+                "subcategory__sort_order",
+                "subcategory__name",
+                "sort_order",
+                "-created_at",
+            )
+        elif subcategory_slug:
+            queryset = queryset.filter(subcategory__slug=subcategory_slug).order_by("sort_order", "-created_at")
+        else:
+            return
+
+        limit = int(params.get("limit") or 18)
+        total = queryset.count()
+        page_items = list(queryset[:limit])
+        data = ProductSummarySerializer(
+            page_items,
+            many=True,
+            context={"include_product_filter_values": False},
+        ).data
+        payload = {"count": total, "results": data} if params.get("include_total") == "1" else data
+        cache.set(self._product_list_cache_key(params), payload, PRODUCT_LIST_CACHE_TTL)
+
+    def _prewarm_product_cache_for_product(self, product_id):
+        if not product_id or not _has_usable_cache_backend():
+            return
+        try:
+            product = Product.objects.select_related("category", "subcategory").get(pk=product_id)
+        except Product.DoesNotExist:
+            return
+
+        scopes = []
+        if product.category_id and product.category and product.category.slug:
+            scopes.append({"category": product.category.slug})
+        if product.subcategory_id and product.subcategory and product.subcategory.slug:
+            scopes.append({"subcategory": product.subcategory.slug})
+
+        for scope in scopes:
+            params = {"summary": "1", "limit": "18", "include_total": "1", **scope}
+            try:
+                self._cache_first_summary_page(params)
+            except Exception:
+                logger.exception("Failed to prewarm product list cache for scope=%s", scope)
+
+    def _schedule_product_cache_prewarm(self, product_id):
+        if not product_id or not _has_usable_cache_backend():
+            return
+
+        def run():
+            self._prewarm_product_cache_for_product(product_id)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _invalidate_cache(self, product=None):
+        """Refresh affected storefront product-list caches after admin changes."""
+        if not _has_usable_cache_backend():
+            return
         cache.clear()
+        if product is not None:
+            self._schedule_product_cache_prewarm(getattr(product, "pk", None))
 
     def list(self, request, *args, **kwargs):
         """
@@ -1993,8 +2096,8 @@ class ProductViewSet(viewsets.ModelViewSet):
             instance = self.get_object()
             serializer = self.get_serializer(instance, data=data, partial=True)
             serializer.is_valid(raise_exception=True)
-            serializer.save()
-            self._invalidate_cache()
+            product = serializer.save()
+            self._invalidate_cache(product)
             if _wants_empty_success_response(request):
                 return Response(status=status.HTTP_204_NO_CONTENT)
             refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=instance.pk)
@@ -2055,7 +2158,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         self._handle_dimension_template(product, dimension_template_obj)
 
-        self._invalidate_cache()
+        self._invalidate_cache(product)
         if _wants_empty_success_response(request):
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response(ProductSerializer(product, context=self.get_serializer_context()).data)
@@ -2067,7 +2170,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             duplicated_product = self._duplicate_product(source)
 
-        self._invalidate_cache()
+        self._invalidate_cache(duplicated_product)
         refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=duplicated_product.pk)
         return Response(
             ProductSerializer(refreshed, context=self.get_serializer_context()).data,
@@ -2130,7 +2233,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             imported_product = self._import_product_copy(source, target_category, target_subcategory)
 
-        self._invalidate_cache()
+        self._invalidate_cache(imported_product)
         refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=imported_product.pk)
         return Response(
             ProductSerializer(refreshed, context=self.get_serializer_context()).data,
