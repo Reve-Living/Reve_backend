@@ -1212,7 +1212,7 @@ class ProductViewSet(viewsets.ModelViewSet):
     # Prefetch groups tuned for list vs detail
     _size_list_prefetch = Prefetch(
         "sizes",
-        queryset=ProductSize.objects.only("id", "product_id", "name", "description", "price_delta").order_by("id"),
+        queryset=ProductSize.objects.only("id", "product_id", "name", "description", "price_delta", "stock_status").order_by("id"),
     )
     _filter_values_list_prefetch = Prefetch(
         "filter_values",
@@ -2381,6 +2381,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 name=size.name,
                 description=size.description,
                 price_delta=size.price_delta,
+                stock_status=size.stock_status,
             )
             size_map[size.id] = cloned_size
 
@@ -2483,6 +2484,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 name=size.get("name", ""),
                 description=size.get("description", ""),
                 price_delta=size.get("price_delta", 0),
+                stock_status=size.get("stock_status", ProductSize.STOCK_STATUS_AVAILABLE),
             )
             size_objs.append(size_obj)
         size_lookup = {s.name.strip().lower(): s for s in size_objs}
@@ -2555,6 +2557,16 @@ class ProductViewSet(viewsets.ModelViewSet):
                 return raw_status
             is_available = _coerce_bool((item or {}).get("is_available", True), default=True)
             return ProductColor.STOCK_STATUS_AVAILABLE if is_available else ProductColor.STOCK_STATUS_OUT_OF_STOCK
+
+        def _normalize_size_stock_status(item):
+            raw_status = str((item or {}).get("stock_status") or "").strip().lower()
+            if raw_status in {
+                ProductSize.STOCK_STATUS_AVAILABLE,
+                ProductSize.STOCK_STATUS_OUT_OF_STOCK,
+                ProductSize.STOCK_STATUS_STOCK_CHECK_NEEDED,
+            }:
+                return raw_status
+            return ProductSize.STOCK_STATUS_AVAILABLE
 
         image_url_max = ProductImage._meta.get_field("url").max_length
         image_color_max = ProductImage._meta.get_field("color_name").max_length
@@ -2654,7 +2666,14 @@ class ProductViewSet(viewsets.ModelViewSet):
                 delta = Decimal(raw_delta)
             except (InvalidOperation, TypeError):
                 raise ValidationError({"sizes": [f"Invalid price_delta for size '{value}'. Provide a number."]})
-            cleaned_sizes.append({"name": value, "description": description, "price_delta": delta})
+            cleaned_sizes.append(
+                {
+                    "name": value,
+                    "description": description,
+                    "price_delta": delta,
+                    "stock_status": _normalize_size_stock_status(size),
+                }
+            )
 
         cleaned_styles = []
         max_style_option_icon_length = 200000  # allow inline SVG but block payload explosions

@@ -341,10 +341,20 @@ class ProductColor(models.Model):
 
 
 class ProductSize(models.Model):
+    STOCK_STATUS_AVAILABLE = "available"
+    STOCK_STATUS_OUT_OF_STOCK = "out_of_stock"
+    STOCK_STATUS_STOCK_CHECK_NEEDED = "stock_check_needed"
+    STOCK_STATUS_CHOICES = [
+        (STOCK_STATUS_AVAILABLE, "Available"),
+        (STOCK_STATUS_OUT_OF_STOCK, "Out of stock"),
+        (STOCK_STATUS_STOCK_CHECK_NEEDED, "Stock check needed"),
+    ]
+
     product = models.ForeignKey(Product, related_name="sizes", on_delete=models.CASCADE)
     name = models.CharField(max_length=50)
     description = models.CharField(max_length=255, blank=True)
     price_delta = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    stock_status = models.CharField(max_length=24, choices=STOCK_STATUS_CHOICES, default=STOCK_STATUS_AVAILABLE)
 
     class Meta:
         indexes = [

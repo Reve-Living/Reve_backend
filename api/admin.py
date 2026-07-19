@@ -61,7 +61,7 @@ class ProductColorInline(admin.TabularInline):
 class ProductSizeInline(admin.TabularInline):
     model = ProductSize
     extra = 0
-    fields = ["name", "description"]
+    fields = ["name", "description", "stock_status"]
 
 
 class ProductStyleInline(admin.TabularInline):
