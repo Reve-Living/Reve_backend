@@ -1232,7 +1232,7 @@ class ProductViewSet(viewsets.ModelViewSet):
     )
     _summary_color_prefetch = Prefetch(
         "colors",
-        queryset=ProductColor.objects.only("id", "product_id", "name", "hex_code", "is_available").order_by("id"),
+        queryset=ProductColor.objects.only("id", "product_id", "name", "hex_code", "is_available", "stock_status").order_by("id"),
     )
     _summary_style_prefetch = Prefetch(
         "styles",
@@ -2371,6 +2371,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 hex_code=color.hex_code,
                 image_url=color.image_url,
                 is_available=color.is_available,
+                stock_status=color.stock_status,
             )
 
         size_map = {}
@@ -2473,6 +2474,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 hex_code=col.get("hex_code", "#000000"),
                 image_url=col.get("image_url", ""),
                 is_available=col.get("is_available", True),
+                stock_status=col.get("stock_status", ProductColor.STOCK_STATUS_AVAILABLE),
             )
         size_objs = []
         for size in sizes:
@@ -2543,6 +2545,17 @@ class ProductViewSet(viewsets.ModelViewSet):
                     return False
             return bool(value)
 
+        def _normalize_color_stock_status(item):
+            raw_status = str((item or {}).get("stock_status") or "").strip().lower()
+            if raw_status in {
+                ProductColor.STOCK_STATUS_AVAILABLE,
+                ProductColor.STOCK_STATUS_OUT_OF_STOCK,
+                ProductColor.STOCK_STATUS_STOCK_CHECK_NEEDED,
+            }:
+                return raw_status
+            is_available = _coerce_bool((item or {}).get("is_available", True), default=True)
+            return ProductColor.STOCK_STATUS_AVAILABLE if is_available else ProductColor.STOCK_STATUS_OUT_OF_STOCK
+
         image_url_max = ProductImage._meta.get_field("url").max_length
         image_color_max = ProductImage._meta.get_field("color_name").max_length
         image_style_max = ProductImage._meta.get_field("style_name").max_length
@@ -2609,12 +2622,14 @@ class ProductViewSet(viewsets.ModelViewSet):
                 raise ValidationError({"colors": [f"Color name too long (max {color_name_max} chars)."]})
             hex_code = str((col or {}).get("hex_code", "#000000")).strip() or "#000000"
             image_url = str((col or {}).get("image_url", "")).strip()
+            stock_status = _normalize_color_stock_status(col)
             cleaned_colors.append(
                 {
                     "name": name,
                     "hex_code": hex_code,
                     "image_url": image_url,
-                    "is_available": _coerce_bool((col or {}).get("is_available", True), default=True),
+                    "is_available": stock_status != ProductColor.STOCK_STATUS_OUT_OF_STOCK,
+                    "stock_status": stock_status,
                 }
             )
 
@@ -2735,11 +2750,13 @@ class ProductViewSet(viewsets.ModelViewSet):
                 cname = str(col.get("name", "")).strip()
                 if not cname:
                     continue
+                stock_status = _normalize_color_stock_status(col)
                 colors_list.append({
                     "name": cname,
                     "hex_code": str(col.get("hex_code", "#000000")).strip() or "#000000",
                     "image_url": str(col.get("image_url", "")).strip(),
-                    "is_available": _coerce_bool(col.get("is_available", True), default=True),
+                    "is_available": stock_status != ProductColor.STOCK_STATUS_OUT_OF_STOCK,
+                    "stock_status": stock_status,
                 })
             if not name and not image_url:
                 continue

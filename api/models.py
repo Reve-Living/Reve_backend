@@ -320,11 +320,21 @@ class ProductVideo(models.Model):
 
 
 class ProductColor(models.Model):
+    STOCK_STATUS_AVAILABLE = "available"
+    STOCK_STATUS_OUT_OF_STOCK = "out_of_stock"
+    STOCK_STATUS_STOCK_CHECK_NEEDED = "stock_check_needed"
+    STOCK_STATUS_CHOICES = [
+        (STOCK_STATUS_AVAILABLE, "Available"),
+        (STOCK_STATUS_OUT_OF_STOCK, "Out of stock"),
+        (STOCK_STATUS_STOCK_CHECK_NEEDED, "Stock check needed"),
+    ]
+
     product = models.ForeignKey(Product, related_name="colors", on_delete=models.CASCADE)
     name = models.CharField(max_length=100)
     hex_code = models.CharField(max_length=7, default='#000000')
     image_url = models.URLField(max_length=1000, blank=True)
     is_available = models.BooleanField(default=True)
+    stock_status = models.CharField(max_length=24, choices=STOCK_STATUS_CHOICES, default=STOCK_STATUS_AVAILABLE)
     
     class Meta:
         ordering = ['id']
