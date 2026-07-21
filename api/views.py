@@ -1372,14 +1372,17 @@ class ProductViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], permission_classes=[AllowAny], url_path="seo")
     def seo(self, request):
         """Compact product metadata used to generate crawlable product HTML at build time."""
-        products = (
-            Product.objects.filter(
-                is_hidden=False,
-                category__is_hidden=False,
+        products = list(
+            _with_live_review_summary(
+                Product.objects.filter(
+                    is_hidden=False,
+                    category__is_hidden=False,
+                )
+                .filter(Q(subcategory__isnull=True) | Q(subcategory__is_hidden=False))
+                .annotate(primary_image_url=Subquery(_primary_image_subquery()))
             )
-            .filter(Q(subcategory__isnull=True) | Q(subcategory__is_hidden=False))
-            .annotate(primary_image_url=Subquery(_primary_image_subquery()))
             .values(
+                "id",
                 "name",
                 "slug",
                 "meta_title",
@@ -1387,12 +1390,38 @@ class ProductViewSet(viewsets.ModelViewSet):
                 "short_description",
                 "description",
                 "price",
+                "delivery_charges",
                 "stock_status",
                 "in_stock",
                 "primary_image_url",
+                "live_rating",
+                "live_review_count",
             )
             .order_by("id")
         )
+        product_ids = [product["id"] for product in products]
+        reviews_by_product = {}
+        for review in (
+            Review.objects.filter(
+                product_id__in=product_ids,
+                is_visible=True,
+            )
+            .exclude(comment="")
+            .order_by("product_id", "-created_at")
+            .values("product_id", "name", "rating", "comment", "created_at")
+        ):
+            bucket = reviews_by_product.setdefault(review["product_id"], [])
+            if len(bucket) >= 10:
+                continue
+            bucket.append(
+                {
+                    "name": review["name"],
+                    "rating": review["rating"],
+                    "comment": review["comment"],
+                    "created_at": review["created_at"].isoformat() if review["created_at"] else None,
+                }
+            )
+
         backend_base_url = request.build_absolute_uri("/")
         data = []
         for product in products:
@@ -1400,10 +1429,19 @@ class ProductViewSet(viewsets.ModelViewSet):
                 product["stock_status"],
                 fallback_in_stock=bool(product["in_stock"]),
             )
+            product_payload = {
+                key: value
+                for key, value in product.items()
+                if key not in ("live_rating", "live_review_count")
+            }
             data.append(
                 {
-                    **product,
+                    **product_payload,
                     "price": str(product["price"]),
+                    "delivery_charges": str(product["delivery_charges"]),
+                    "rating": round(float(product["live_rating"] or 0), 1),
+                    "review_count": int(product["live_review_count"] or 0),
+                    "reviews": reviews_by_product.get(product["id"], []),
                     "stock_status": stock_status,
                     "primary_image_url": _to_absolute_url(
                         product["primary_image_url"],
