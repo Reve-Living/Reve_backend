@@ -14,7 +14,7 @@ from django.core.files.base import ContentFile
 from django.contrib.auth.models import User
 from django.utils.text import slugify
 from django.db import connection, transaction
-from django.db.models import Avg, BooleanField, Count, DecimalField, Exists, IntegerField, OuterRef, Prefetch, Q, Subquery, Case, When, Value
+from django.db.models import Avg, BooleanField, Count, DecimalField, Exists, FloatField, IntegerField, OuterRef, Prefetch, Q, Subquery, Case, When, Value
 from django.core.cache import cache
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
@@ -191,9 +191,20 @@ def _slowest_sql_query(query_start):
 
 
 def _with_live_review_summary(queryset):
+    visible_reviews = (
+        Review.objects.filter(product_id=OuterRef("pk"), is_visible=True)
+        .order_by()
+        .values("product_id")
+    )
     return queryset.annotate(
-        live_rating=Avg("reviews__rating", filter=Q(reviews__is_visible=True)),
-        live_review_count=Count("reviews", filter=Q(reviews__is_visible=True), distinct=True),
+        live_rating=Subquery(
+            visible_reviews.annotate(average_rating=Avg("rating")).values("average_rating")[:1],
+            output_field=FloatField(),
+        ),
+        live_review_count=Subquery(
+            visible_reviews.annotate(total_reviews=Count("id")).values("total_reviews")[:1],
+            output_field=IntegerField(),
+        ),
     )
 
 
@@ -1014,53 +1025,55 @@ class CollectionViewSet(viewsets.ModelViewSet):
         .prefetch_related(
             Prefetch(
                 "products",
-                queryset=Product.objects.select_related("category", "subcategory")
-                .only(
-                    "id",
-                    "name",
-                    "slug",
-                    "meta_title",
-                    "meta_description",
-                    "category_id",
-                    "subcategory_id",
-                    "price",
-                    "original_price",
-                    "discount_percentage",
-                    "stock_status",
-                    "in_stock",
-                    "is_hidden",
-                    "is_bestseller",
-                    "is_new",
-                    "show_size_icons",
-                    "rating",
-                    "review_count",
-                    "dimension_paragraph",
-                    "dimension_note",
-                    "show_dimensions_table",
-                    "sort_order",
-                    "assembly_service_enabled",
-                    "assembly_service_price",
-                    "short_description",
-                    "created_at",
-                    "category__name",
-                    "category__slug",
-                    "category__discount_override_enabled",
-                    "category__discount_percentage",
-                    "subcategory__name",
-                    "subcategory__slug",
-                    "subcategory__discount_override_enabled",
-                    "subcategory__discount_percentage",
+                queryset=_with_live_review_summary(
+                    Product.objects.select_related("category", "subcategory")
+                    .only(
+                        "id",
+                        "name",
+                        "slug",
+                        "meta_title",
+                        "meta_description",
+                        "category_id",
+                        "subcategory_id",
+                        "price",
+                        "original_price",
+                        "discount_percentage",
+                        "stock_status",
+                        "in_stock",
+                        "is_hidden",
+                        "is_bestseller",
+                        "is_new",
+                        "show_size_icons",
+                        "rating",
+                        "review_count",
+                        "dimension_paragraph",
+                        "dimension_note",
+                        "show_dimensions_table",
+                        "sort_order",
+                        "assembly_service_enabled",
+                        "assembly_service_price",
+                        "short_description",
+                        "created_at",
+                        "category__name",
+                        "category__slug",
+                        "category__discount_override_enabled",
+                        "category__discount_percentage",
+                        "subcategory__name",
+                        "subcategory__slug",
+                        "subcategory__discount_override_enabled",
+                        "subcategory__discount_percentage",
+                    )
+                    .prefetch_related(
+                        "images",
+                        "sizes",
+                        Prefetch(
+                            "filter_values",
+                            queryset=ProductFilterValue.objects.select_related("filter_option__filter_type"),
+                            to_attr="filter_values_all",
+                        ),
+                    )
+                    .order_by("sort_order", "-created_at")
                 )
-                .prefetch_related(
-                    "images",
-                    "sizes",
-                    Prefetch(
-                        "filter_values",
-                        queryset=ProductFilterValue.objects.select_related("filter_option__filter_type"),
-                        to_attr="filter_values_all",
-                    ),
-                )
-                .order_by("sort_order", "-created_at")
             )
         )
         .order_by("sort_order", "name")
@@ -1260,10 +1273,12 @@ class ProductViewSet(viewsets.ModelViewSet):
         "dimension_template_link__template__rows",
         Prefetch(
             "suggested_products",
-            queryset=Product.objects.filter(is_hidden=False)
-            .select_related("category", "subcategory")
-            .prefetch_related("images", "sizes")
-            .order_by("sort_order", "-created_at"),
+            queryset=_with_live_review_summary(
+                Product.objects.filter(is_hidden=False)
+                .select_related("category", "subcategory")
+                .prefetch_related("images", "sizes")
+                .order_by("sort_order", "-created_at")
+            ),
             to_attr="prefetched_suggested_products",
         ),
     ]
@@ -1775,17 +1790,20 @@ class ProductViewSet(viewsets.ModelViewSet):
         else:
             queryset = queryset.order_by("sort_order", "-created_at")
 
+        if self.request.method in ("GET", "HEAD", "OPTIONS") and not is_admin_picker and not is_admin_summary:
+            queryset = _with_live_review_summary(queryset)
+
         return queryset
 
     def _product_list_cache_key(self, params):
-        return f"product-list:v6:{urlencode(sorted(params.items()), doseq=True)}"
+        return f"product-list:v7:{urlencode(sorted(params.items()), doseq=True)}"
 
     def _summary_queryset_for_cache(self):
         primary_image_subquery = _primary_image_subquery()
         primary_image_flip_subquery = _primary_image_flip_subquery()
         min_size_price_subquery = _min_size_price_subquery()
         size_count_subquery = _size_count_subquery()
-        return (
+        return _with_live_review_summary(
             Product.objects.select_related("category", "subcategory")
             .filter(is_hidden=False, category__is_hidden=False)
             .filter(Q(subcategory__isnull=True) | Q(subcategory__is_hidden=False))
@@ -2014,7 +2032,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             return log_query_count(super().list(request, *args, **kwargs))
 
         query_string = urlencode(sorted(request.query_params.lists()), doseq=True)
-        cache_key = f"product-list:v6:{query_string}"
+        cache_key = f"product-list:v7:{query_string}"
         cached_data = cache.get(cache_key)
         if cached_data is not None:
             return log_query_count(Response(cached_data))
@@ -2041,7 +2059,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             return super().retrieve(request, *args, **kwargs)
 
         response_kind = "quick" if self._is_quick_detail_request() else "core" if self._is_core_detail_request() else "full"
-        cache_key = f"product-detail:v4:{response_kind}:{kwargs.get(self.lookup_field or 'pk')}"
+        cache_key = f"product-detail:v5:{response_kind}:{kwargs.get(self.lookup_field or 'pk')}"
         cached_data = cache.get(cache_key)
         if cached_data is not None:
             return Response(cached_data)

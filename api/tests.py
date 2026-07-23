@@ -1101,6 +1101,7 @@ class ReviewMediaTests(TestCase):
             comment="Excellent.",
             is_visible=True,
         )
+        Product.objects.filter(pk=product.pk).update(rating="0.0", review_count=0)
 
         response = APIClient().get(f"/api/products/?category={category.slug}")
 
@@ -1108,6 +1109,13 @@ class ReviewMediaTests(TestCase):
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]["rating"], 5.0)
         self.assertEqual(response.data[0]["review_count"], 1)
+
+        summary_response = APIClient().get(f"/api/products/?category={category.slug}&summary=1")
+
+        self.assertEqual(summary_response.status_code, 200)
+        self.assertEqual(len(summary_response.data), 1)
+        self.assertEqual(summary_response.data[0]["rating"], 5.0)
+        self.assertEqual(summary_response.data[0]["review_count"], 1)
 
 
 class CategorySortOrderSwapTests(TestCase):
