@@ -55,8 +55,25 @@ class ProductReviewSummaryMixin:
 class ProductDiscountDisplayMixin(serializers.Serializer):
     discount_percentage = serializers.SerializerMethodField()
     effective_discount_percentage = serializers.SerializerMethodField()
+    discount_override_applied = serializers.SerializerMethodField()
+
+    def _get_public_discount_override(self, obj):
+        category = getattr(obj, "category", None)
+        category_discount = int(getattr(category, "discount_percentage", 0) or 0) if category else 0
+        if category and getattr(category, "discount_override_enabled", False) and category_discount > 0:
+            return min(category_discount, 100)
+
+        subcategory = getattr(obj, "subcategory", None)
+        subcategory_discount = int(getattr(subcategory, "discount_percentage", 0) or 0) if subcategory else 0
+        if subcategory and getattr(subcategory, "discount_override_enabled", False) and subcategory_discount > 0:
+            return min(subcategory_discount, 100)
+
+        return None
 
     def _get_effective_public_discount_percentage(self, obj):
+        override = self._get_public_discount_override(obj)
+        if override is not None:
+            return override
         return int(getattr(obj, "discount_percentage", 0) or 0)
 
     def get_discount_percentage(self, obj):
@@ -75,6 +92,9 @@ class ProductDiscountDisplayMixin(serializers.Serializer):
 
     def get_effective_discount_percentage(self, obj):
         return self._get_effective_public_discount_percentage(obj)
+
+    def get_discount_override_applied(self, obj):
+        return self._get_public_discount_override(obj) is not None
 
 
 def _get_first_related_item(obj, relation_name):
@@ -587,6 +607,7 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
             "original_price",
             "discount_percentage",
             "effective_discount_percentage",
+            "discount_override_applied",
             "description",
             "short_description",
             "features",
@@ -877,6 +898,7 @@ class ProductQuickSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMi
             "original_price",
             "discount_percentage",
             "effective_discount_percentage",
+            "discount_override_applied",
             "description",
             "short_description",
             "features",
@@ -942,7 +964,7 @@ class ProductListSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMix
             "original_price",
             "discount_percentage",
             "effective_discount_percentage",
-            "effective_discount_percentage",
+            "discount_override_applied",
             "stock_status",
             "in_stock",
             "is_hidden",
@@ -1098,6 +1120,8 @@ class ProductSummarySerializer(ProductDiscountDisplayMixin, ProductReviewSummary
             "price",
             "original_price",
             "discount_percentage",
+            "effective_discount_percentage",
+            "discount_override_applied",
             "min_size_price",
             "size_count",
             "stock_status",

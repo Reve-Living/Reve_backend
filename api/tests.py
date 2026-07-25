@@ -2305,6 +2305,35 @@ class ProductListCachingTests(TestCase):
         self.assertEqual(response.data[0]["discount_percentage"], 20)
         self.assertEqual(response.data[0]["effective_discount_percentage"], 20)
 
+    def test_subcategory_discount_overrides_product_discount(self):
+        category = Category.objects.create(
+            name="Beds",
+            slug="beds-subcategory-discount",
+        )
+        subcategory = SubCategory.objects.create(
+            category=category,
+            name="Divan Beds",
+            slug="divan-beds-subcategory-discount",
+            discount_override_enabled=True,
+            discount_percentage=30,
+        )
+        product = Product.objects.create(
+            name="Subcategory Discount Bed",
+            slug="subcategory-discount-bed",
+            category=category,
+            subcategory=subcategory,
+            price="169.00",
+            original_price="219.00",
+            discount_percentage=15,
+        )
+
+        response = APIClient().get(f"/api/products/?slug={product.slug}&summary=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data[0]["discount_percentage"], 30)
+        self.assertEqual(response.data[0]["effective_discount_percentage"], 30)
+        self.assertTrue(response.data[0]["discount_override_applied"])
+
     def test_admin_product_update_can_return_no_content(self):
         admin_user = User.objects.create_user(
             username="admin-no-content-update",
