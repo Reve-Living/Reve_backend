@@ -2275,7 +2275,7 @@ class ProductListCachingTests(TestCase):
         mock_cache_get.assert_called_once()
         mock_cache_set.assert_called_once()
 
-    def test_category_discount_overrides_subcategory_and_product_discounts(self):
+    def test_subcategory_discount_overrides_category_and_product_discounts(self):
         category = Category.objects.create(
             name="Mattresses",
             slug="mattresses-category-discount",
@@ -2302,8 +2302,8 @@ class ProductListCachingTests(TestCase):
         response = APIClient().get(f"/api/products/?slug={product.slug}&summary=1")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data[0]["discount_percentage"], 20)
-        self.assertEqual(response.data[0]["effective_discount_percentage"], 20)
+        self.assertEqual(response.data[0]["discount_percentage"], 30)
+        self.assertEqual(response.data[0]["effective_discount_percentage"], 30)
 
     def test_subcategory_discount_overrides_product_discount(self):
         category = Category.objects.create(

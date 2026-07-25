@@ -58,15 +58,15 @@ class ProductDiscountDisplayMixin(serializers.Serializer):
     discount_override_applied = serializers.SerializerMethodField()
 
     def _get_public_discount_override(self, obj):
-        category = getattr(obj, "category", None)
-        category_discount = int(getattr(category, "discount_percentage", 0) or 0) if category else 0
-        if category and getattr(category, "discount_override_enabled", False) and category_discount > 0:
-            return min(category_discount, 100)
-
         subcategory = getattr(obj, "subcategory", None)
         subcategory_discount = int(getattr(subcategory, "discount_percentage", 0) or 0) if subcategory else 0
         if subcategory and getattr(subcategory, "discount_override_enabled", False) and subcategory_discount > 0:
             return min(subcategory_discount, 100)
+
+        category = getattr(obj, "category", None)
+        category_discount = int(getattr(category, "discount_percentage", 0) or 0) if category else 0
+        if category and getattr(category, "discount_override_enabled", False) and category_discount > 0:
+            return min(category_discount, 100)
 
         return None
 
