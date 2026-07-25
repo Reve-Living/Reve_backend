@@ -2245,6 +2245,26 @@ class ProductImageOrderTests(TestCase):
         self.assertCountEqual(response.data[0]["suggested_products"], [suggested.id, hidden.id])
         self.assertEqual([item["id"] for item in response.data[0]["suggested_products_data"]], [suggested.id])
 
+    def test_admin_can_save_and_reload_selected_suggested_products(self):
+        admin = User.objects.create_user(username="suggestion-admin", password="test", is_staff=True)
+        category = Category.objects.create(name="Sofas", slug="sofas-suggestion-admin")
+        product = Product.objects.create(name="Main Sofa", slug="main-sofa", category=category, price="499.99")
+        first = Product.objects.create(name="First Suggestion", slug="first-suggestion", category=category, price="399.99")
+        second = Product.objects.create(name="Second Suggestion", slug="second-suggestion", category=category, price="299.99")
+        client = APIClient()
+        client.force_authenticate(user=admin)
+
+        update_response = client.patch(
+            f"/api/products/{product.id}/",
+            {"suggested_products": [first.id, second.id]},
+            format="json",
+        )
+        self.assertEqual(update_response.status_code, 200)
+
+        detail_response = client.get(f"/api/products/{product.id}/?admin_detail=1")
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertCountEqual(detail_response.data["suggested_products"], [first.id, second.id])
+
 
 @override_settings(
     CACHES={
