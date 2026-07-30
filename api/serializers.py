@@ -56,6 +56,30 @@ class ProductDiscountDisplayMixin(serializers.Serializer):
     discount_percentage = serializers.SerializerMethodField()
     effective_discount_percentage = serializers.SerializerMethodField()
     discount_override_applied = serializers.SerializerMethodField()
+    faqs = serializers.SerializerMethodField()
+    delivery_info = serializers.SerializerMethodField()
+    delivery_title = serializers.SerializerMethodField()
+
+    def _is_admin_request(self):
+        request = self.context.get("request")
+        return bool(request and (getattr(request.user, "is_staff", False) or request.headers.get("Authorization")))
+
+    def _get_content_override(self, obj, enabled_field, value_field):
+        if self._is_admin_request():
+            return getattr(obj, value_field, None)
+        for owner in (getattr(obj, "subcategory", None), getattr(obj, "category", None)):
+            if owner and getattr(owner, enabled_field, False):
+                return getattr(owner, value_field, None)
+        return getattr(obj, value_field, None)
+
+    def get_faqs(self, obj):
+        return self._get_content_override(obj, "faqs_override_enabled", "faqs") or []
+
+    def get_delivery_info(self, obj):
+        return self._get_content_override(obj, "delivery_info_override_enabled", "delivery_info") or ""
+
+    def get_delivery_title(self, obj):
+        return self._get_content_override(obj, "delivery_info_override_enabled", "delivery_title") or ""
 
     def _get_public_discount_override(self, obj):
         subcategory = getattr(obj, "subcategory", None)
@@ -77,14 +101,7 @@ class ProductDiscountDisplayMixin(serializers.Serializer):
         return int(getattr(obj, "discount_percentage", 0) or 0)
 
     def get_discount_percentage(self, obj):
-        request = self.context.get("request")
-        is_admin_request = bool(
-            request
-            and (
-                getattr(request.user, "is_staff", False)
-                or request.headers.get("Authorization")
-            )
-        )
+        is_admin_request = self._is_admin_request()
         if is_admin_request:
             return int(getattr(obj, "discount_percentage", 0) or 0)
 

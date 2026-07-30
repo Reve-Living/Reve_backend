@@ -27,6 +27,11 @@ class Category(models.Model):
     sort_order = models.IntegerField(default=0)
     discount_override_enabled = models.BooleanField(default=False)
     discount_percentage = models.PositiveIntegerField(default=0)
+    faqs_override_enabled = models.BooleanField(default=False)
+    faqs = models.JSONField(default=list, blank=True)
+    delivery_info_override_enabled = models.BooleanField(default=False)
+    delivery_info = models.TextField(blank=True, default="")
+    delivery_title = models.CharField(max_length=150, blank=True, default="")
 
     def __str__(self) -> str:
         return self.name
@@ -52,6 +57,11 @@ class SubCategory(models.Model):
     sort_order = models.IntegerField(default=0)
     discount_override_enabled = models.BooleanField(default=False)
     discount_percentage = models.PositiveIntegerField(default=0)
+    faqs_override_enabled = models.BooleanField(default=False)
+    faqs = models.JSONField(default=list, blank=True)
+    delivery_info_override_enabled = models.BooleanField(default=False)
+    delivery_info = models.TextField(blank=True, default="")
+    delivery_title = models.CharField(max_length=150, blank=True, default="")
 
     def __str__(self) -> str:
         return f"{self.category.name} -> {self.name}"
