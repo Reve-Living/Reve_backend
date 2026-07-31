@@ -39,6 +39,7 @@ from .models import (
     ProductStyle,
     ProductFabric,
     ProductMattress,
+    ProductAddon,
     MattressOption,
     MattressOptionPrice,
     Order,
@@ -83,6 +84,7 @@ from .serializers import (
     ProductStyleLibrarySerializer,
     MattressOptionSerializer,
     ProductMattressSerializer,
+    ProductAddonSerializer,
 )
 from .emails import send_order_cancellation_emails, send_order_confirmation_emails
 from .delivery_note_pdf import build_delivery_note_pdf
@@ -3081,6 +3083,25 @@ class ProductMattressAdminViewSet(viewsets.ModelViewSet):
         response = super().partial_update(request, *args, **kwargs)
         self._invalidate_cache()
         return response
+
+
+class ProductAddonViewSet(viewsets.ModelViewSet):
+    queryset = ProductAddon.objects.select_related("main_product", "addon_product").prefetch_related("addon_product__images")
+    serializer_class = ProductAddonSerializer
+    permission_classes = [IsAdminUser]
+    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
+
+    def perform_create(self, serializer):
+        serializer.save()
+        cache.clear()
+
+    def perform_update(self, serializer):
+        serializer.save()
+        cache.clear()
+
+    def perform_destroy(self, instance):
+        instance.delete()
+        cache.clear()
 
     def destroy(self, request, *args, **kwargs):
         response = super().destroy(request, *args, **kwargs)

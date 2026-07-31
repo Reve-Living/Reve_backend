@@ -18,6 +18,7 @@ from .models import (
     ProductStyle,
     ProductFabric,
     ProductMattress,
+    ProductAddon,
     MattressOption,
     MattressOptionPrice,
     Order,
@@ -571,6 +572,35 @@ class DimensionTemplateSerializer(serializers.ModelSerializer):
         fields = ("id", "name", "slug", "notes", "is_default", "rows")
 
 
+class ProductAddonSerializer(serializers.ModelSerializer):
+    main_product_name = serializers.CharField(source="main_product.name", read_only=True)
+    addon_product_name = serializers.CharField(source="addon_product.name", read_only=True)
+    addon_product_slug = serializers.CharField(source="addon_product.slug", read_only=True)
+    regular_price = serializers.DecimalField(source="addon_product.price", max_digits=10, decimal_places=2, read_only=True)
+    addon_product_stock_status = serializers.CharField(source="addon_product.stock_status", read_only=True)
+    addon_product_image = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductAddon
+        fields = ("id", "main_product", "main_product_name", "addon_product", "addon_product_name",
+                  "addon_product_slug", "addon_product_image", "addon_product_stock_status", "regular_price",
+                  "addon_price", "is_active", "sort_order", "created_at", "updated_at")
+
+    def get_addon_product_image(self, obj):
+        image = obj.addon_product.images.order_by("sort_order", "id").first()
+        return image.url if image else ""
+
+    def validate(self, attrs):
+        main = attrs.get("main_product", getattr(self.instance, "main_product", None))
+        addon = attrs.get("addon_product", getattr(self.instance, "addon_product", None))
+        if main and addon and main.pk == addon.pk:
+            raise serializers.ValidationError("A product cannot be its own add-on.")
+        price = attrs.get("addon_price", getattr(self.instance, "addon_price", None))
+        if price is not None and price < 0:
+            raise serializers.ValidationError({"addon_price": "Add-on price cannot be negative."})
+        return attrs
+
+
 class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, serializers.ModelSerializer):
     images = ProductImageSerializer(many=True, read_only=True)
     videos = ProductVideoSerializer(many=True, read_only=True)
@@ -579,6 +609,7 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
     styles = ProductStyleSerializer(many=True, read_only=True)
     fabrics = ProductFabricSerializer(many=True, read_only=True)
     mattresses = serializers.SerializerMethodField()
+    product_addons = serializers.SerializerMethodField()
     filters = serializers.SerializerMethodField()
     computed_dimensions = serializers.SerializerMethodField()
     wingback_width_delta_cm = serializers.SerializerMethodField()
@@ -659,6 +690,7 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
             "styles",
             "fabrics",
             "mattresses",
+            "product_addons",
             "filters",
             "computed_dimensions",
             "dimension_paragraph",
@@ -687,6 +719,12 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
                 .order_by("sort_order", "-created_at")
             )
         return ProductSummarySerializer(queryset, many=True).data
+
+    def get_product_addons(self, obj):
+        links = obj.product_addons.filter(
+            is_active=True, addon_product__is_hidden=False
+        ).select_related("addon_product", "addon_product__category").prefetch_related("addon_product__images")
+        return ProductAddonSerializer(links, many=True).data
 
     def get_mattresses(self, obj):
         """

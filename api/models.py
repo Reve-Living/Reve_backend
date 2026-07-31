@@ -471,6 +471,28 @@ class ProductMattress(models.Model):
         return self.name or f"Mattress #{self.id}"
 
 
+class ProductAddon(models.Model):
+    """An existing product offered at a special price with another product."""
+
+    main_product = models.ForeignKey(Product, related_name="product_addons", on_delete=models.CASCADE)
+    addon_product = models.ForeignKey(Product, related_name="addon_for_products", on_delete=models.CASCADE)
+    addon_price = models.DecimalField(max_digits=10, decimal_places=2)
+    is_active = models.BooleanField(default=True)
+    sort_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["main_product", "addon_product"], name="unique_product_addon"),
+            models.CheckConstraint(condition=~models.Q(main_product=models.F("addon_product")), name="product_addon_not_self"),
+        ]
+
+    def __str__(self):
+        return f"{self.addon_product} add-on for {self.main_product}"
+
+
 class Promotion(models.Model):
     name = models.CharField(max_length=255)
     code = models.CharField(max_length=80, unique=True)
