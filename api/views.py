@@ -458,6 +458,9 @@ def _get_lowest_google_feed_price(product, sizes=None) -> Decimal:
 def _get_google_feed_product_text(product) -> str:
     category_name = getattr(getattr(product, "category", None), "name", "")
     subcategory_name = getattr(getattr(product, "subcategory", None), "name", "")
+    features = getattr(product, "features", "")
+    if isinstance(features, list):
+        features = " ".join(str(item or "") for item in features)
     return " ".join(
         str(value or "")
         for value in [
@@ -467,30 +470,78 @@ def _get_google_feed_product_text(product) -> str:
             subcategory_name,
             getattr(product, "short_description", ""),
             getattr(product, "description", ""),
+            features,
         ]
     ).lower()
+
+
+GOOGLE_FEED_FRAME_MATERIAL_PATTERNS = (
+    (r"\bengineered wood frame\b", "Engineered Wood"),
+    (r"\bsolid rubberwood\b|\brubberwood frame\b", "Solid Rubberwood"),
+    (r"\bsolid wood frame\b|\bwooden frame\b|\bwood frame\b", "Solid Wood"),
+    (r"\bmetal frame\b|\bsteel frame\b|\biron frame\b", "Metal"),
+)
+
+
+GOOGLE_FEED_COLOUR_PHRASES = (
+    ("dark grey", "Dark Grey"),
+    ("light grey", "Light Grey"),
+    ("stone grey", "Stone Grey"),
+    ("charcoal", "Charcoal"),
+    ("silver", "Silver"),
+    ("white", "White"),
+    ("black", "Black"),
+    ("cream", "Cream"),
+    ("beige", "Beige"),
+    ("brown", "Brown"),
+    ("blue", "Blue"),
+    ("green", "Green"),
+    ("pink", "Pink"),
+)
+
+
+GOOGLE_FEED_FABRIC_TYPE_PHRASES = (
+    ("plush velvet", "Plush Velvet"),
+    ("crushed velvet", "Crushed Velvet"),
+    ("velvet fabric", "Velvet Fabric"),
+    ("chenille", "Chenille"),
+    ("conistan", "Conistan"),
+    ("aire leather", "Aire Leather"),
+    ("pu leather effect", "PU Leather Effect"),
+    ("leather effect", "Leather Effect"),
+    ("linen", "Linen"),
+    ("velvet", "Velvet"),
+    ("fabric", "Fabric"),
+)
+
+
+def _extract_google_feed_phrase_values(text: str, phrases: tuple) -> list:
+    normalised_text = f" {_normalise_google_feed_detail_name(text)} "
+    values = []
+    for phrase, label in phrases:
+        if re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", normalised_text):
+            values.append(label)
+    return values
+
+
+def _extract_google_feed_frame_material(product_text: str) -> str:
+    for pattern, value in GOOGLE_FEED_FRAME_MATERIAL_PATTERNS:
+        if re.search(pattern, product_text):
+            return value
+    return ""
 
 
 def _get_google_feed_extra_attributes(product, materials) -> dict:
     product_text = _get_google_feed_product_text(product)
     is_bed = "bed" in product_text and "sofa bed" not in product_text
-    is_upholstered = "upholstered" in product_text
     is_ottoman = "ottoman" in product_text
-    is_zoe = "zoe" in product_text
 
-    frame_material = ""
+    frame_material = _extract_google_feed_frame_material(product_text)
     headboard_material = ""
     number_of_drawers = ""
 
-    if is_bed and is_zoe:
-        frame_material = "Solid Rubberwood"
-    elif is_bed and is_upholstered:
-        frame_material = "Engineered Wood"
-
     if is_bed and materials:
         headboard_material = ", ".join(materials)
-    elif is_bed and is_zoe:
-        headboard_material = "Fabric"
 
     if is_bed and is_ottoman:
         number_of_drawers = "0"
@@ -557,6 +608,21 @@ def _get_google_feed_filter_details(product) -> dict:
     return grouped_values
 
 
+def _get_google_feed_filter_values(filter_details: dict, keywords: tuple) -> list:
+    values = []
+    for filter_name, option_names in filter_details.items():
+        if any(keyword in filter_name for keyword in keywords):
+            for option_name in option_names:
+                if option_name not in values:
+                    values.append(option_name)
+    return values
+
+
+def _has_google_feed_detail_attribute(details: list, attribute_name: str) -> bool:
+    normalised_attribute_name = _normalise_google_feed_detail_name(attribute_name)
+    return any(_normalise_google_feed_detail_name(item.get("attribute_name")) == normalised_attribute_name for item in details)
+
+
 def _get_google_feed_dimension_value(row: dict, size=None) -> str:
     values = row.get("values", {}) if isinstance(row, dict) else {}
     if not isinstance(values, dict):
@@ -584,7 +650,15 @@ def _get_google_feed_dimension_value(row: dict, size=None) -> str:
     return "; ".join(f"{key}: {value}" for key, value in cleaned_values)
 
 
-def _get_google_feed_product_details(product, size, material_text: str, color_text: str, extra_attributes: dict) -> list:
+def _get_google_feed_product_details(
+    product,
+    size,
+    material_text: str,
+    color_text: str,
+    extra_attributes: dict,
+    extracted_color_text: str = "",
+    extracted_fabric_text: str = "",
+) -> list:
     details = []
 
     product_type = getattr(getattr(product, "subcategory", None), "name", "") or getattr(getattr(product, "category", None), "name", "")
@@ -614,6 +688,11 @@ def _get_google_feed_product_details(product, size, material_text: str, color_te
             _append_google_feed_product_detail(details, "General", "Material", joined_options)
         elif "shape" in filter_name:
             _append_google_feed_product_detail(details, "General", "Shape", joined_options)
+
+    if extracted_color_text and not _has_google_feed_detail_attribute(details, "Colour"):
+        _append_google_feed_product_detail(details, "General", "Colour", extracted_color_text)
+    if extracted_fabric_text and not _has_google_feed_detail_attribute(details, "Fabric Type"):
+        _append_google_feed_product_detail(details, "General", "Fabric Type", extracted_fabric_text)
 
     for row in getattr(product, "dimensions", []) or []:
         if not isinstance(row, dict):
@@ -672,21 +751,28 @@ def _build_google_feed_item_xml(
     
     # Collect fabric/material info
     fabrics = getattr(product, "_prefetched_fabrics", [])
+    filter_details = _get_google_feed_filter_details(product)
     materials = []
     if fabrics:
         materials = [f.name for f in fabrics if f.name]
     headboard_materials = materials[:]
-    if not materials and hasattr(product, "description"):
-        # Fallback: try to extract from description
-        materials = ["Engineered Wood & Fabric"]
+    if not materials:
+        materials = _get_google_feed_filter_values(filter_details, ("fabric", "material", "upholstery"))
     material_text = ", ".join(materials) if materials else ""
     extra_attributes = _get_google_feed_extra_attributes(product, headboard_materials)
     
     # Collect color info
     colors = getattr(product, "_prefetched_colors", [])
     color_names = [c.name for c in colors if c.name]
+    product_text = _get_google_feed_product_text(product)
+    filter_color_names = _get_google_feed_filter_values(filter_details, ("colour", "color"))
+    extracted_color_names = _extract_google_feed_phrase_values(product_text, GOOGLE_FEED_COLOUR_PHRASES)
+    if not color_names:
+        color_names = filter_color_names or extracted_color_names
+    extracted_fabric_names = [] if material_text else _extract_google_feed_phrase_values(product_text, GOOGLE_FEED_FABRIC_TYPE_PHRASES)
     color_text = color_names[0] if color_names else ""
     detail_color_text = ", ".join(color_names) if color_names else ""
+    extracted_fabric_text = ", ".join(extracted_fabric_names) if extracted_fabric_names else ""
     
     # Google Product Category
     subcategory_name = ""
@@ -696,7 +782,15 @@ def _build_google_feed_item_xml(
     
     # Product Type (based on category/subcategory)
     product_type = f"{brand} > {subcategory_name}" if subcategory_name else brand
-    product_details = _get_google_feed_product_details(product, size, material_text, detail_color_text, extra_attributes)
+    product_details = _get_google_feed_product_details(
+        product,
+        size,
+        material_text,
+        detail_color_text,
+        extra_attributes,
+        extracted_color_text=", ".join(extracted_color_names) if extracted_color_names else "",
+        extracted_fabric_text=extracted_fabric_text,
+    )
     
     # Check if product has storage (custom label)
     has_storage = False

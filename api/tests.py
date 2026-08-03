@@ -3343,6 +3343,56 @@ class GoogleMerchantFeedTests(TestCase):
         self.assertIn("<g:attribute_value>45 cm</g:attribute_value>", xml)
         self.assertIn("<g:attribute_value>50 cm</g:attribute_value>", xml)
 
+    def test_feed_extracts_safe_colour_and_fabric_without_guessing_materials(self):
+        category = Category.objects.create(name="Sofas", slug="sofas-feed-title-extraction")
+        subcategory = SubCategory.objects.create(
+            name="Reclining Sofas",
+            slug="reclining-sofas-feed-title-extraction",
+            category=category,
+        )
+        Product.objects.create(
+            name="Turin 2 Seater Dark Grey Fabric Recliner",
+            slug="turin-2-seater-dark-grey-fabric-recliner-feed",
+            category=category,
+            subcategory=subcategory,
+            price="499.00",
+            short_description="Comfortable recliner sofa.",
+            description="Comfortable recliner sofa description.",
+        )
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:color>Dark Grey</g:color>", xml)
+        self.assertIn("<g:attribute_name>Colour</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>Dark Grey</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_name>Fabric Type</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>Fabric</g:attribute_value>", xml)
+        self.assertNotIn("<g:material>Engineered Wood &amp; Fabric</g:material>", xml)
+        self.assertNotIn("<g:frame_material>Engineered Wood</g:frame_material>", xml)
+
+    def test_feed_only_adds_frame_material_when_explicitly_stated(self):
+        category = Category.objects.create(name="Sofas", slug="sofas-feed-frame-material")
+        subcategory = SubCategory.objects.create(
+            name="Reclining Sofas",
+            slug="reclining-sofas-feed-frame-material",
+            category=category,
+        )
+        Product.objects.create(
+            name="Roma Recliner Sofa",
+            slug="roma-recliner-sofa-feed-frame-material",
+            category=category,
+            subcategory=subcategory,
+            price="699.00",
+            short_description="Recliner sofa with a metal frame.",
+            description="This recliner sofa has a metal frame and fabric upholstery.",
+        )
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:frame_material>Metal</g:frame_material>", xml)
+        self.assertIn("<g:attribute_name>Frame Material</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>Metal</g:attribute_value>", xml)
+
 
 class CategoryFilterOptionOrderTests(TestCase):
     def setUp(self):
