@@ -365,12 +365,28 @@ def _to_absolute_url(raw_url: str, base_url: str) -> str:
 GOOGLE_PRODUCT_CATEGORY_MAP = {
     # Beds & Mattresses
     "beds": "Furniture > Beds & Bed Frames",
+    "bed frames": "Furniture > Beds & Bed Frames",
+    "kids beds": "Furniture > Beds & Bed Frames",
+    "storage beds": "Furniture > Beds & Bed Frames",
+    "ottoman beds": "Furniture > Beds & Bed Frames",
+    "upholstered beds": "Furniture > Beds & Bed Frames",
+    "upholstered ottoman beds": "Furniture > Beds & Bed Frames",
+    "wooden beds": "Furniture > Beds & Bed Frames",
+    "bunk beds": "Furniture > Beds & Bed Frames",
+    "cabin beds": "Furniture > Beds & Bed Frames",
+    "day beds": "Furniture > Beds & Bed Frames",
     "mattresses": "Furniture > Mattresses",
+    "mattress": "Furniture > Mattresses",
     # Sofas & Seating
     "sofas": "Furniture > Sofas & Couches",
+    "reclining sofas": "Furniture > Sofas & Couches",
+    "corner sofas": "Furniture > Sofas & Couches",
+    "sofa beds": "Furniture > Futons",
     "armchairs": "Furniture > Armchairs & Accent Chairs",
+    "recliner armchairs": "Furniture > Armchairs & Accent Chairs",
     "seating": "Furniture > Seating",
     "chairs": "Furniture > Chairs",
+    "dining chairs": "Furniture > Chairs",
     "stools": "Furniture > Ottomans & Poufs",
     # Storage
     "storage": "Furniture > Storage & Organization",
@@ -379,7 +395,9 @@ GOOGLE_PRODUCT_CATEGORY_MAP = {
     # Tables & Desks
     "tables": "Furniture > Tables",
     "dining": "Furniture > Dining Tables",
+    "dining tables": "Furniture > Dining Tables",
     "coffee-tables": "Furniture > Coffee Tables",
+    "coffee tables": "Furniture > Coffee Tables",
     "desks": "Furniture > Desks",
     # Default fallback
     "default": "Furniture",
@@ -483,6 +501,141 @@ def _get_google_feed_extra_attributes(product, materials) -> dict:
     }
 
 
+GOOGLE_FEED_DIMENSION_NAMES = {
+    "depth": "Depth",
+    "length": "Length",
+    "seat height": "Seat Height",
+    "seat_height": "Seat Height",
+    "seat-height": "Seat Height",
+    "width": "Width",
+    "height": "Height",
+    "bed height": "Bed Height",
+    "headboard height": "Headboard Height",
+}
+
+
+def _normalise_google_feed_detail_name(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).lower()
+
+
+def _append_google_feed_product_detail(details: list, section_name: str, attribute_name: str, attribute_value: str) -> None:
+    attribute_name = str(attribute_name or "").strip()
+    attribute_value = str(attribute_value or "").strip()
+    if not attribute_name or not attribute_value:
+        return
+
+    key = (
+        _normalise_google_feed_detail_name(section_name),
+        _normalise_google_feed_detail_name(attribute_name),
+        _normalise_google_feed_detail_name(attribute_value),
+    )
+    if any(item["_key"] == key for item in details):
+        return
+
+    details.append({
+        "section_name": str(section_name or "").strip() or "Specifications",
+        "attribute_name": attribute_name,
+        "attribute_value": attribute_value,
+        "_key": key,
+    })
+
+
+def _get_google_feed_filter_details(product) -> dict:
+    grouped_values = {}
+    filter_values = getattr(product, "_prefetched_filter_values", [])
+    for product_filter_value in filter_values:
+        option = getattr(product_filter_value, "filter_option", None)
+        filter_type = getattr(option, "filter_type", None)
+        filter_name = getattr(filter_type, "name", "")
+        option_name = getattr(option, "name", "")
+        if not filter_name or not option_name:
+            continue
+        grouped_values.setdefault(_normalise_google_feed_detail_name(filter_name), [])
+        if option_name not in grouped_values[_normalise_google_feed_detail_name(filter_name)]:
+            grouped_values[_normalise_google_feed_detail_name(filter_name)].append(option_name)
+    return grouped_values
+
+
+def _get_google_feed_dimension_value(row: dict, size=None) -> str:
+    values = row.get("values", {}) if isinstance(row, dict) else {}
+    if not isinstance(values, dict):
+        return ""
+
+    if size:
+        size_name = str(getattr(size, "name", "") or "").strip()
+        if size_name:
+            for key, value in values.items():
+                if str(key).strip().lower() == size_name.lower() and str(value or "").strip():
+                    return str(value).strip()
+
+    cleaned_values = [
+        (str(key).strip(), str(value).strip())
+        for key, value in values.items()
+        if str(key).strip() and str(value or "").strip()
+    ]
+    if not cleaned_values:
+        return ""
+
+    unique_values = list(dict.fromkeys(value for _key, value in cleaned_values))
+    if len(unique_values) == 1:
+        return unique_values[0]
+
+    return "; ".join(f"{key}: {value}" for key, value in cleaned_values)
+
+
+def _get_google_feed_product_details(product, size, material_text: str, color_text: str, extra_attributes: dict) -> list:
+    details = []
+
+    product_type = getattr(getattr(product, "subcategory", None), "name", "") or getattr(getattr(product, "category", None), "name", "")
+    _append_google_feed_product_detail(details, "General", "Product Type", product_type)
+
+    if color_text:
+        _append_google_feed_product_detail(details, "General", "Colour", color_text)
+    if material_text:
+        _append_google_feed_product_detail(details, "General", "Material", material_text)
+    if extra_attributes.get("frame_material"):
+        _append_google_feed_product_detail(details, "General", "Frame Material", extra_attributes["frame_material"])
+    if extra_attributes.get("headboard_material"):
+        _append_google_feed_product_detail(details, "General", "Headboard Material", extra_attributes["headboard_material"])
+    if extra_attributes.get("number_of_drawers") != "":
+        _append_google_feed_product_detail(details, "General", "Number of Drawers", extra_attributes["number_of_drawers"])
+
+    filter_details = _get_google_feed_filter_details(product)
+    for filter_name, option_names in filter_details.items():
+        joined_options = ", ".join(option_names)
+        if "fabric" in filter_name:
+            _append_google_feed_product_detail(details, "General", "Fabric Type", joined_options)
+        elif "upholstery" in filter_name or "finish" in filter_name:
+            _append_google_feed_product_detail(details, "General", "Upholstery / Finish", joined_options)
+        elif "colour" in filter_name or "color" in filter_name:
+            _append_google_feed_product_detail(details, "General", "Colour", joined_options)
+        elif "material" in filter_name:
+            _append_google_feed_product_detail(details, "General", "Material", joined_options)
+        elif "shape" in filter_name:
+            _append_google_feed_product_detail(details, "General", "Shape", joined_options)
+
+    for row in getattr(product, "dimensions", []) or []:
+        if not isinstance(row, dict):
+            continue
+        measurement = str(row.get("measurement", "") or "").strip()
+        normalised_measurement = _normalise_google_feed_detail_name(measurement)
+        attribute_name = GOOGLE_FEED_DIMENSION_NAMES.get(normalised_measurement, measurement)
+        attribute_value = _get_google_feed_dimension_value(row, size=size)
+        _append_google_feed_product_detail(details, "Dimensions", attribute_name, attribute_value)
+
+    return details
+
+
+def _append_google_feed_product_detail_xml(lines: list, detail: dict) -> None:
+    lines.extend([
+        "      <g:product_detail>",
+        f"        <g:section_name>{escape(detail['section_name'])}</g:section_name>",
+        f"        <g:attribute_name>{escape(detail['attribute_name'])}</g:attribute_name>",
+        f"        <g:attribute_value>{escape(detail['attribute_value'])}</g:attribute_value>",
+        "      </g:product_detail>",
+    ])
+
+
 def _build_google_feed_item_xml(
     product,
     size=None,
@@ -532,15 +685,17 @@ def _build_google_feed_item_xml(
     colors = getattr(product, "_prefetched_colors", [])
     color_names = [c.name for c in colors if c.name]
     color_text = color_names[0] if color_names else ""
+    detail_color_text = ", ".join(color_names) if color_names else ""
     
     # Google Product Category
-    google_category = _get_google_product_category(brand)
-    
-    # Product Type (based on category/subcategory)
     subcategory_name = ""
     if hasattr(product, "subcategory") and product.subcategory:
         subcategory_name = product.subcategory.name
+    google_category = _get_google_product_category(subcategory_name or brand)
+    
+    # Product Type (based on category/subcategory)
     product_type = f"{brand} > {subcategory_name}" if subcategory_name else brand
+    product_details = _get_google_feed_product_details(product, size, material_text, detail_color_text, extra_attributes)
     
     # Check if product has storage (custom label)
     has_storage = False
@@ -579,6 +734,9 @@ def _build_google_feed_item_xml(
     if extra_attributes["number_of_drawers"]:
         lines.append(f"      <g:number_of_drawers>{escape(extra_attributes['number_of_drawers'])}</g:number_of_drawers>")
     
+    for detail in product_details:
+        _append_google_feed_product_detail_xml(lines, detail)
+    
     # Add color
     if color_text:
         lines.append(f"      <g:color>{escape(color_text)}</g:color>")
@@ -603,10 +761,12 @@ def _build_google_feed_items_xml(product, frontend_base_url: str, backend_base_u
     sizes = list(product.sizes.all()) if hasattr(product, "sizes") else []
     colors = list(product.colors.all()) if hasattr(product, "colors") else []
     fabrics = list(product.fabrics.all()) if hasattr(product, "fabrics") else []
+    filter_values = list(product.filter_values.all()) if hasattr(product, "filter_values") else []
     
     # Store prefetched data on product object for use in _build_google_feed_item_xml
     product._prefetched_colors = colors
     product._prefetched_fabrics = fabrics
+    product._prefetched_filter_values = filter_values
     
     items_xml = ""
 
@@ -652,9 +812,9 @@ def google_feed_xml(request):
     products = (
         Product.objects.filter(is_hidden=False)
         .select_related("category", "subcategory")
-        .prefetch_related("sizes", "colors", "fabrics")
+        .prefetch_related("sizes", "colors", "fabrics", "filter_values__filter_option__filter_type")
         .annotate(primary_image_url=Subquery(primary_image_subquery))
-        .only("id", "name", "slug", "description", "short_description", "price", "in_stock", "category__name", "subcategory__name")
+        .only("id", "name", "slug", "description", "short_description", "dimensions", "price", "in_stock", "category__name", "subcategory__name")
         .order_by("id")
     )
 

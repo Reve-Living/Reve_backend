@@ -3281,6 +3281,68 @@ class GoogleMerchantFeedTests(TestCase):
         self.assertNotIn("Milano Super Orthopaedic Mattress - 3ft Single", xml)
         self.assertNotIn("<g:price>338.00 GBP</g:price>", xml)
 
+    def test_feed_adds_structured_product_details_from_existing_product_data(self):
+        category = Category.objects.create(name="Sofas", slug="sofas-feed-details")
+        subcategory = SubCategory.objects.create(name="Reclining Sofas", slug="reclining-sofas-feed-details", category=category)
+        product = Product.objects.create(
+            name="Turin 2 Seater Dark Grey Fabric Recliner Sofa",
+            slug="turin-2-seater-dark-grey-fabric-recliner-sofa-feed",
+            category=category,
+            subcategory=subcategory,
+            price="499.00",
+            short_description="The Turin Dark Grey Fabric recliner sofa.",
+            description="The Turin Dark Grey Fabric recliner sofa description.",
+            dimensions=[
+                {"measurement": "Depth", "values": {"Overall": "92 cm"}},
+                {"measurement": "Seat Height", "values": {"Overall": "48 cm"}},
+                {"measurement": "Length", "values": {"Overall": "152 cm"}},
+            ],
+        )
+        ProductColor.objects.create(product=product, name="Dark Grey", hex_code="#444444")
+        ProductFabric.objects.create(product=product, name="Fabric", image_url="https://example.com/fabric.jpg")
+        filter_type = FilterType.objects.create(name="Fabric Type", slug="fabric-type-feed-details")
+        filter_option = FilterOption.objects.create(filter_type=filter_type, name="Fabric", slug="fabric-feed-details")
+        ProductFilterValue.objects.create(product=product, filter_option=filter_option)
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:google_product_category>Furniture &gt; Sofas &amp; Couches</g:google_product_category>", xml)
+        self.assertIn("<g:product_type>Sofas &gt; Reclining Sofas</g:product_type>", xml)
+        self.assertIn("<g:description>The Turin Dark Grey Fabric recliner sofa.</g:description>", xml)
+        self.assertIn("<g:attribute_name>Depth</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>92 cm</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_name>Seat Height</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>48 cm</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_name>Length</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>152 cm</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_name>Colour</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>Dark Grey</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_name>Fabric Type</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>Fabric</g:attribute_value>", xml)
+
+    def test_feed_uses_size_specific_dimension_details_for_variant_items(self):
+        category = Category.objects.create(name="Chairs", slug="chairs-feed-details")
+        product = Product.objects.create(
+            name="Variant Dining Chair",
+            slug="variant-dining-chair-feed-details",
+            category=category,
+            price="199.99",
+            short_description="Dining chair",
+            description="Dining chair description",
+            dimensions=[
+                {"measurement": "Seat Height", "values": {"Standard": "45 cm", "Tall": "50 cm"}},
+            ],
+        )
+        ProductSize.objects.create(product=product, name="Standard", description="", price_delta="199.99")
+        ProductSize.objects.create(product=product, name="Tall", description="", price_delta="249.99")
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:title>Variant Dining Chair - Standard</g:title>", xml)
+        self.assertIn("<g:title>Variant Dining Chair - Tall</g:title>", xml)
+        self.assertIn("<g:attribute_value>45 cm</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_value>50 cm</g:attribute_value>", xml)
+
 
 class CategoryFilterOptionOrderTests(TestCase):
     def setUp(self):
