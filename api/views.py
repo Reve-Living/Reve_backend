@@ -473,6 +473,7 @@ def _get_google_feed_product_text(product) -> str:
 
 def _get_google_feed_extra_attributes(product, materials) -> dict:
     product_text = _get_google_feed_product_text(product)
+    is_bed = "bed" in product_text and "sofa bed" not in product_text
     is_upholstered = "upholstered" in product_text
     is_ottoman = "ottoman" in product_text
     is_zoe = "zoe" in product_text
@@ -481,17 +482,17 @@ def _get_google_feed_extra_attributes(product, materials) -> dict:
     headboard_material = ""
     number_of_drawers = ""
 
-    if is_zoe:
+    if is_bed and is_zoe:
         frame_material = "Solid Rubberwood"
-    elif is_upholstered:
+    elif is_bed and is_upholstered:
         frame_material = "Engineered Wood"
 
-    if materials:
+    if is_bed and materials:
         headboard_material = ", ".join(materials)
-    elif is_zoe:
+    elif is_bed and is_zoe:
         headboard_material = "Fabric"
 
-    if is_ottoman:
+    if is_bed and is_ottoman:
         number_of_drawers = "0"
 
     return {
