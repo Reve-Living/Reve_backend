@@ -3370,6 +3370,85 @@ class GoogleMerchantFeedTests(TestCase):
         self.assertNotIn("<g:material>Engineered Wood &amp; Fabric</g:material>", xml)
         self.assertNotIn("<g:frame_material>Engineered Wood</g:frame_material>", xml)
 
+    def test_feed_extracts_safe_dimensions_from_dimension_paragraph(self):
+        category = Category.objects.create(name="Sofas", slug="sofas-feed-dimension-paragraph")
+        subcategory = SubCategory.objects.create(
+            name="Reclining Sofas",
+            slug="reclining-sofas-feed-dimension-paragraph",
+            category=category,
+        )
+        Product.objects.create(
+            name="Hannah Grey Fabric Corner Recliner Sofa",
+            slug="hannah-grey-fabric-corner-recliner-sofa-feed",
+            category=category,
+            subcategory=subcategory,
+            price="799.00",
+            short_description="Grey fabric recliner sofa.",
+            description="Grey fabric recliner sofa description.",
+            dimension_paragraph="Length: 270 cm\n\nWidth: 235 cm\n\nDepth: 90 cm\n\nHeight: 90 cm\n\nSeat Height: 48 cm",
+        )
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:attribute_name>Length</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>270 cm</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_name>Width</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>235 cm</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_name>Depth</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>90 cm</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_name>Seat Height</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>48 cm</g:attribute_value>", xml)
+
+    def test_feed_uses_width_as_length_for_sofas_when_no_length_is_available(self):
+        category = Category.objects.create(name="Sofas", slug="sofas-feed-width-length")
+        subcategory = SubCategory.objects.create(
+            name="Reclining Sofas",
+            slug="reclining-sofas-feed-width-length",
+            category=category,
+        )
+        Product.objects.create(
+            name="Turin Grey Aire Leather Manual Recliner Armchair",
+            slug="turin-grey-aire-leather-manual-recliner-armchair-feed",
+            category=category,
+            subcategory=subcategory,
+            price="349.00",
+            short_description="Grey aire leather recliner armchair.",
+            description="Grey aire leather recliner armchair description.",
+            dimension_paragraph="Width: 96 cm\n\nDepth: 97 cm\n\nHeight: 102 cm",
+        )
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:attribute_name>Width</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_name>Length</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>96 cm</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_name>Depth</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>97 cm</g:attribute_value>", xml)
+
+    def test_feed_prefers_specific_title_colour_over_broad_colour_data(self):
+        category = Category.objects.create(name="Sofas", slug="sofas-feed-title-colour-priority")
+        subcategory = SubCategory.objects.create(
+            name="Reclining Sofas",
+            slug="reclining-sofas-feed-title-colour-priority",
+            category=category,
+        )
+        product = Product.objects.create(
+            name="Turin Grey Aire Leather Manual Recliner Sofa",
+            slug="turin-grey-aire-leather-manual-recliner-sofa-feed",
+            category=category,
+            subcategory=subcategory,
+            price="499.00",
+            short_description="Grey aire leather recliner sofa.",
+            description="Grey aire leather recliner sofa description.",
+        )
+        ProductColor.objects.create(product=product, name="Black Family", hex_code="#000000")
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:color>Grey</g:color>", xml)
+        self.assertIn("<g:attribute_value>Grey</g:attribute_value>", xml)
+        self.assertNotIn("<g:color>Black Family</g:color>", xml)
+
     def test_feed_only_adds_frame_material_when_explicitly_stated(self):
         category = Category.objects.create(name="Sofas", slug="sofas-feed-frame-material")
         subcategory = SubCategory.objects.create(

@@ -487,6 +487,8 @@ GOOGLE_FEED_COLOUR_PHRASES = (
     ("dark grey", "Dark Grey"),
     ("light grey", "Light Grey"),
     ("stone grey", "Stone Grey"),
+    ("grey", "Grey"),
+    ("gray", "Gray"),
     ("charcoal", "Charcoal"),
     ("silver", "Silver"),
     ("white", "White"),
@@ -504,6 +506,11 @@ GOOGLE_FEED_FABRIC_TYPE_PHRASES = (
     ("plush velvet", "Plush Velvet"),
     ("crushed velvet", "Crushed Velvet"),
     ("velvet fabric", "Velvet Fabric"),
+    ("micro fibre fabric", "Micro Fibre Fabric"),
+    ("microfibre fabric", "Microfibre Fabric"),
+    ("micro fibre", "Micro Fibre"),
+    ("microfiber", "Microfiber"),
+    ("bonded leather", "Bonded Leather"),
     ("chenille", "Chenille"),
     ("conistan", "Conistan"),
     ("aire leather", "Aire Leather"),
@@ -518,9 +525,12 @@ GOOGLE_FEED_FABRIC_TYPE_PHRASES = (
 def _extract_google_feed_phrase_values(text: str, phrases: tuple) -> list:
     normalised_text = f" {_normalise_google_feed_detail_name(text)} "
     values = []
+    matched_spans = []
     for phrase, label in phrases:
-        if re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", normalised_text):
+        match = re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", normalised_text)
+        if match and not any(match.start() < end and match.end() > start for start, end in matched_spans):
             values.append(label)
+            matched_spans.append(match.span())
     return values
 
 
@@ -564,6 +574,23 @@ GOOGLE_FEED_DIMENSION_NAMES = {
     "bed height": "Bed Height",
     "headboard height": "Headboard Height",
 }
+
+
+GOOGLE_FEED_DIMENSION_PARAGRAPH_PATTERNS = {
+    "Depth": r"\bdepth\s*[:\-]\s*([0-9]+(?:\.[0-9]+)?\s*(?:cm|mm|m|in|inch|inches))\b",
+    "Length": r"\blength\s*[:\-]\s*([0-9]+(?:\.[0-9]+)?\s*(?:cm|mm|m|in|inch|inches))\b",
+    "Width": r"\bwidth\s*[:\-]\s*([0-9]+(?:\.[0-9]+)?\s*(?:cm|mm|m|in|inch|inches))\b",
+    "Height": r"(?<!seat )(?<!bed )(?<!headboard )\bheight\s*[:\-]\s*([0-9]+(?:\.[0-9]+)?\s*(?:cm|mm|m|in|inch|inches))\b",
+    "Seat Height": r"\bseat\s*height\s*[:\-]\s*([0-9]+(?:\.[0-9]+)?\s*(?:cm|mm|m|in|inch|inches))\b",
+}
+
+
+GOOGLE_FEED_LENGTH_FROM_WIDTH_PRODUCT_TERMS = (
+    "sofa",
+    "recliner",
+    "armchair",
+    "chair",
+)
 
 
 def _normalise_google_feed_detail_name(value: str) -> str:
@@ -650,6 +677,41 @@ def _get_google_feed_dimension_value(row: dict, size=None) -> str:
     return "; ".join(f"{key}: {value}" for key, value in cleaned_values)
 
 
+def _get_google_feed_dimension_paragraph_details(product) -> list:
+    dimension_text = " ".join(
+        str(value or "")
+        for value in [
+            getattr(product, "dimension_paragraph", ""),
+            getattr(product, "dimension_note", ""),
+        ]
+    )
+    if not dimension_text.strip():
+        return []
+
+    details = []
+    for attribute_name, pattern in GOOGLE_FEED_DIMENSION_PARAGRAPH_PATTERNS.items():
+        match = re.search(pattern, dimension_text, flags=re.IGNORECASE)
+        if match:
+            _append_google_feed_product_detail(details, "Dimensions", attribute_name, match.group(1))
+
+    has_length = _has_google_feed_detail_attribute(details, "Length")
+    has_width = _has_google_feed_detail_attribute(details, "Width")
+    product_name = _normalise_google_feed_detail_name(getattr(product, "name", ""))
+    if not has_length and has_width and any(term in product_name for term in GOOGLE_FEED_LENGTH_FROM_WIDTH_PRODUCT_TERMS):
+        width_detail = next(
+            (
+                item
+                for item in details
+                if _normalise_google_feed_detail_name(item.get("attribute_name")) == "width"
+            ),
+            None,
+        )
+        if width_detail:
+            _append_google_feed_product_detail(details, "Dimensions", "Length", width_detail["attribute_value"])
+
+    return details
+
+
 def _get_google_feed_product_details(
     product,
     size,
@@ -702,6 +764,14 @@ def _get_google_feed_product_details(
         attribute_name = GOOGLE_FEED_DIMENSION_NAMES.get(normalised_measurement, measurement)
         attribute_value = _get_google_feed_dimension_value(row, size=size)
         _append_google_feed_product_detail(details, "Dimensions", attribute_name, attribute_value)
+
+    for detail in _get_google_feed_dimension_paragraph_details(product):
+        _append_google_feed_product_detail(
+            details,
+            detail["section_name"],
+            detail["attribute_name"],
+            detail["attribute_value"],
+        )
 
     return details
 
@@ -764,11 +834,12 @@ def _build_google_feed_item_xml(
     # Collect color info
     colors = getattr(product, "_prefetched_colors", [])
     color_names = [c.name for c in colors if c.name]
+    product_name_text = _normalise_google_feed_detail_name(getattr(product, "name", ""))
     product_text = _get_google_feed_product_text(product)
     filter_color_names = _get_google_feed_filter_values(filter_details, ("colour", "color"))
+    title_color_names = _extract_google_feed_phrase_values(product_name_text, GOOGLE_FEED_COLOUR_PHRASES)
     extracted_color_names = _extract_google_feed_phrase_values(product_text, GOOGLE_FEED_COLOUR_PHRASES)
-    if not color_names:
-        color_names = filter_color_names or extracted_color_names
+    color_names = title_color_names or color_names or filter_color_names or extracted_color_names
     extracted_fabric_names = [] if material_text else _extract_google_feed_phrase_values(product_text, GOOGLE_FEED_FABRIC_TYPE_PHRASES)
     color_text = color_names[0] if color_names else ""
     detail_color_text = ", ".join(color_names) if color_names else ""
@@ -909,7 +980,7 @@ def google_feed_xml(request):
         .select_related("category", "subcategory")
         .prefetch_related("sizes", "colors", "fabrics", "filter_values__filter_option__filter_type")
         .annotate(primary_image_url=Subquery(primary_image_subquery))
-        .only("id", "name", "slug", "description", "short_description", "dimensions", "price", "in_stock", "category__name", "subcategory__name")
+        .only("id", "name", "slug", "description", "short_description", "features", "dimensions", "dimension_paragraph", "dimension_note", "price", "in_stock", "category__name", "subcategory__name")
         .order_by("id")
     )
 
