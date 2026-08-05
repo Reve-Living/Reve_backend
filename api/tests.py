@@ -3449,6 +3449,48 @@ class GoogleMerchantFeedTests(TestCase):
         self.assertIn("<g:attribute_value>Grey</g:attribute_value>", xml)
         self.assertNotIn("<g:color>Black Family</g:color>", xml)
 
+    def test_feed_uses_manual_google_merchant_fields_when_present(self):
+        category = Category.objects.create(name="Sofas", slug="sofas-feed-manual-fields")
+        subcategory = SubCategory.objects.create(
+            name="Reclining Sofas",
+            slug="reclining-sofas-feed-manual-fields",
+            category=category,
+        )
+        product = Product.objects.create(
+            name="Manual Feed Recliner Sofa",
+            slug="manual-feed-recliner-sofa",
+            category=category,
+            subcategory=subcategory,
+            price="699.00",
+            short_description="Manual feed recliner sofa.",
+            description="Manual feed recliner sofa description.",
+            google_feed_brand="Reve Living",
+            google_feed_color="Dark Grey",
+            google_feed_material="Fabric",
+            google_feed_fabric_type="Micro Fibre Fabric",
+            google_feed_frame_material="Metal",
+            google_feed_depth="90 cm",
+            google_feed_length="205 cm",
+            google_feed_seat_height="48 cm",
+        )
+        ProductColor.objects.create(product=product, name="Black Family", hex_code="#000000")
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:brand>Reve Living</g:brand>", xml)
+        self.assertIn("<g:color>Dark Grey</g:color>", xml)
+        self.assertIn("<g:material>Fabric</g:material>", xml)
+        self.assertIn("<g:frame_material>Metal</g:frame_material>", xml)
+        self.assertIn("<g:attribute_name>Fabric Type</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>Micro Fibre Fabric</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_name>Depth</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>90 cm</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_name>Length</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>205 cm</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_name>Seat Height</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>48 cm</g:attribute_value>", xml)
+        self.assertNotIn("<g:color>Black Family</g:color>", xml)
+
     def test_feed_only_adds_frame_material_when_explicitly_stated(self):
         category = Category.objects.create(name="Sofas", slug="sofas-feed-frame-material")
         subcategory = SubCategory.objects.create(

@@ -541,6 +541,10 @@ def _extract_google_feed_frame_material(product_text: str) -> str:
     return ""
 
 
+def _get_google_feed_manual_value(product, field_name: str) -> str:
+    return str(getattr(product, field_name, "") or "").strip()
+
+
 def _get_google_feed_extra_attributes(product, materials) -> dict:
     product_text = _get_google_feed_product_text(product)
     is_bed = "bed" in product_text and "sofa bed" not in product_text
@@ -557,9 +561,9 @@ def _get_google_feed_extra_attributes(product, materials) -> dict:
         number_of_drawers = "0"
 
     return {
-        "frame_material": frame_material,
-        "headboard_material": headboard_material,
-        "number_of_drawers": number_of_drawers,
+        "frame_material": _get_google_feed_manual_value(product, "google_feed_frame_material") or frame_material,
+        "headboard_material": _get_google_feed_manual_value(product, "google_feed_headboard_material") or headboard_material,
+        "number_of_drawers": _get_google_feed_manual_value(product, "google_feed_number_of_drawers") or number_of_drawers,
     }
 
 
@@ -736,25 +740,42 @@ def _get_google_feed_product_details(
         _append_google_feed_product_detail(details, "General", "Headboard Material", extra_attributes["headboard_material"])
     if extra_attributes.get("number_of_drawers") != "":
         _append_google_feed_product_detail(details, "General", "Number of Drawers", extra_attributes["number_of_drawers"])
+    if extracted_fabric_text:
+        _append_google_feed_product_detail(details, "General", "Fabric Type", extracted_fabric_text)
 
     filter_details = _get_google_feed_filter_details(product)
     for filter_name, option_names in filter_details.items():
         joined_options = ", ".join(option_names)
         if "fabric" in filter_name:
-            _append_google_feed_product_detail(details, "General", "Fabric Type", joined_options)
+            if not _has_google_feed_detail_attribute(details, "Fabric Type"):
+                _append_google_feed_product_detail(details, "General", "Fabric Type", joined_options)
         elif "upholstery" in filter_name or "finish" in filter_name:
             _append_google_feed_product_detail(details, "General", "Upholstery / Finish", joined_options)
         elif "colour" in filter_name or "color" in filter_name:
-            _append_google_feed_product_detail(details, "General", "Colour", joined_options)
+            if not _has_google_feed_detail_attribute(details, "Colour"):
+                _append_google_feed_product_detail(details, "General", "Colour", joined_options)
         elif "material" in filter_name:
-            _append_google_feed_product_detail(details, "General", "Material", joined_options)
+            if not _has_google_feed_detail_attribute(details, "Material"):
+                _append_google_feed_product_detail(details, "General", "Material", joined_options)
         elif "shape" in filter_name:
             _append_google_feed_product_detail(details, "General", "Shape", joined_options)
 
     if extracted_color_text and not _has_google_feed_detail_attribute(details, "Colour"):
         _append_google_feed_product_detail(details, "General", "Colour", extracted_color_text)
-    if extracted_fabric_text and not _has_google_feed_detail_attribute(details, "Fabric Type"):
-        _append_google_feed_product_detail(details, "General", "Fabric Type", extracted_fabric_text)
+    manual_dimension_fields = (
+        ("Depth", "google_feed_depth"),
+        ("Length", "google_feed_length"),
+        ("Width", "google_feed_width"),
+        ("Height", "google_feed_height"),
+        ("Seat Height", "google_feed_seat_height"),
+    )
+    for attribute_name, field_name in manual_dimension_fields:
+        _append_google_feed_product_detail(
+            details,
+            "Dimensions",
+            attribute_name,
+            _get_google_feed_manual_value(product, field_name),
+        )
 
     for row in getattr(product, "dimensions", []) or []:
         if not isinstance(row, dict):
@@ -762,10 +783,14 @@ def _get_google_feed_product_details(
         measurement = str(row.get("measurement", "") or "").strip()
         normalised_measurement = _normalise_google_feed_detail_name(measurement)
         attribute_name = GOOGLE_FEED_DIMENSION_NAMES.get(normalised_measurement, measurement)
+        if _has_google_feed_detail_attribute(details, attribute_name):
+            continue
         attribute_value = _get_google_feed_dimension_value(row, size=size)
         _append_google_feed_product_detail(details, "Dimensions", attribute_name, attribute_value)
 
     for detail in _get_google_feed_dimension_paragraph_details(product):
+        if _has_google_feed_detail_attribute(details, detail["attribute_name"]):
+            continue
         _append_google_feed_product_detail(
             details,
             detail["section_name"],
@@ -801,7 +826,7 @@ def _build_google_feed_item_xml(
     product_image = _to_absolute_url(getattr(product, "primary_image_url", ""), backend_base_url)
     description = (product.short_description or product.description or product.name or "").strip()
     availability = "in stock" if product.in_stock else "out of stock"
-    brand = (getattr(product.category, "name", "") or "Reve Living").strip()
+    brand = (_get_google_feed_manual_value(product, "google_feed_brand") or getattr(product.category, "name", "") or "Reve Living").strip()
     
     # ProductSize.price_delta stores the actual size price used by the storefront.
     price = Decimal(price_override) if price_override is not None else Decimal(product.price)
@@ -828,6 +853,9 @@ def _build_google_feed_item_xml(
     headboard_materials = materials[:]
     if not materials:
         materials = _get_google_feed_filter_values(filter_details, ("fabric", "material", "upholstery"))
+    manual_material = _get_google_feed_manual_value(product, "google_feed_material")
+    if manual_material:
+        materials = [manual_material]
     material_text = ", ".join(materials) if materials else ""
     extra_attributes = _get_google_feed_extra_attributes(product, headboard_materials)
     
@@ -839,8 +867,12 @@ def _build_google_feed_item_xml(
     filter_color_names = _get_google_feed_filter_values(filter_details, ("colour", "color"))
     title_color_names = _extract_google_feed_phrase_values(product_name_text, GOOGLE_FEED_COLOUR_PHRASES)
     extracted_color_names = _extract_google_feed_phrase_values(product_text, GOOGLE_FEED_COLOUR_PHRASES)
+    manual_color = _get_google_feed_manual_value(product, "google_feed_color")
+    if manual_color:
+        title_color_names = [manual_color]
     color_names = title_color_names or color_names or filter_color_names or extracted_color_names
-    extracted_fabric_names = [] if material_text else _extract_google_feed_phrase_values(product_text, GOOGLE_FEED_FABRIC_TYPE_PHRASES)
+    manual_fabric_type = _get_google_feed_manual_value(product, "google_feed_fabric_type")
+    extracted_fabric_names = [manual_fabric_type] if manual_fabric_type else ([] if material_text else _extract_google_feed_phrase_values(product_text, GOOGLE_FEED_FABRIC_TYPE_PHRASES))
     color_text = color_names[0] if color_names else ""
     detail_color_text = ", ".join(color_names) if color_names else ""
     extracted_fabric_text = ", ".join(extracted_fabric_names) if extracted_fabric_names else ""
@@ -980,7 +1012,7 @@ def google_feed_xml(request):
         .select_related("category", "subcategory")
         .prefetch_related("sizes", "colors", "fabrics", "filter_values__filter_option__filter_type")
         .annotate(primary_image_url=Subquery(primary_image_subquery))
-        .only("id", "name", "slug", "description", "short_description", "features", "dimensions", "dimension_paragraph", "dimension_note", "price", "in_stock", "category__name", "subcategory__name")
+        .only("id", "name", "slug", "description", "short_description", "features", "dimensions", "dimension_paragraph", "dimension_note", "google_feed_brand", "google_feed_color", "google_feed_material", "google_feed_fabric_type", "google_feed_frame_material", "google_feed_headboard_material", "google_feed_number_of_drawers", "google_feed_depth", "google_feed_length", "google_feed_width", "google_feed_height", "google_feed_seat_height", "price", "in_stock", "category__name", "subcategory__name")
         .order_by("id")
     )
 
@@ -2688,6 +2720,18 @@ class ProductViewSet(viewsets.ModelViewSet):
             slug=slug,
             meta_title=source.meta_title,
             meta_description=source.meta_description,
+            google_feed_brand=source.google_feed_brand,
+            google_feed_color=source.google_feed_color,
+            google_feed_material=source.google_feed_material,
+            google_feed_fabric_type=source.google_feed_fabric_type,
+            google_feed_frame_material=source.google_feed_frame_material,
+            google_feed_headboard_material=source.google_feed_headboard_material,
+            google_feed_number_of_drawers=source.google_feed_number_of_drawers,
+            google_feed_depth=source.google_feed_depth,
+            google_feed_length=source.google_feed_length,
+            google_feed_width=source.google_feed_width,
+            google_feed_height=source.google_feed_height,
+            google_feed_seat_height=source.google_feed_seat_height,
             category=category,
             subcategory=subcategory,
             imported_from_product=imported_from_product,

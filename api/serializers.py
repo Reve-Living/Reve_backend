@@ -649,6 +649,18 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
             "slug",
             "meta_title",
             "meta_description",
+            "google_feed_brand",
+            "google_feed_color",
+            "google_feed_material",
+            "google_feed_fabric_type",
+            "google_feed_frame_material",
+            "google_feed_headboard_material",
+            "google_feed_number_of_drawers",
+            "google_feed_depth",
+            "google_feed_length",
+            "google_feed_width",
+            "google_feed_height",
+            "google_feed_seat_height",
             "category",
             "subcategory",
             "price",
@@ -1371,6 +1383,24 @@ class ProductWriteSerializer(serializers.ModelSerializer):
 
         if isinstance(short_description, str):
             short_description = short_description.strip()
+
+        google_feed_fields = (
+            "google_feed_brand",
+            "google_feed_color",
+            "google_feed_material",
+            "google_feed_fabric_type",
+            "google_feed_frame_material",
+            "google_feed_headboard_material",
+            "google_feed_number_of_drawers",
+            "google_feed_depth",
+            "google_feed_length",
+            "google_feed_width",
+            "google_feed_height",
+            "google_feed_seat_height",
+        )
+        for field_name in google_feed_fields:
+            if field_name in attrs:
+                attrs[field_name] = str(attrs.get(field_name) or "").strip()
 
         if not short_description and isinstance(description, str) and description:
             first_sentence = description.split(".")[0].strip()

@@ -208,6 +208,18 @@ class Product(models.Model):
     slug = models.SlugField(unique=True, max_length=255)
     meta_title = models.CharField(max_length=255, blank=True, default="")
     meta_description = models.TextField(blank=True, default="")
+    google_feed_brand = models.CharField(max_length=120, blank=True, default="")
+    google_feed_color = models.CharField(max_length=120, blank=True, default="")
+    google_feed_material = models.CharField(max_length=180, blank=True, default="")
+    google_feed_fabric_type = models.CharField(max_length=180, blank=True, default="")
+    google_feed_frame_material = models.CharField(max_length=180, blank=True, default="")
+    google_feed_headboard_material = models.CharField(max_length=180, blank=True, default="")
+    google_feed_number_of_drawers = models.CharField(max_length=20, blank=True, default="")
+    google_feed_depth = models.CharField(max_length=80, blank=True, default="")
+    google_feed_length = models.CharField(max_length=80, blank=True, default="")
+    google_feed_width = models.CharField(max_length=80, blank=True, default="")
+    google_feed_height = models.CharField(max_length=80, blank=True, default="")
+    google_feed_seat_height = models.CharField(max_length=80, blank=True, default="")
     category = models.ForeignKey(Category, related_name="products", on_delete=models.CASCADE)
     subcategory = models.ForeignKey(
         SubCategory, related_name="products", on_delete=models.SET_NULL, null=True, blank=True
