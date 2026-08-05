@@ -6,7 +6,7 @@ import logging
 import time
 import threading
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from urllib.parse import urlencode, urljoin
+from urllib.parse import quote, urlencode, urljoin, urlsplit, urlunsplit
 
 from django.conf import settings
 from django.core.files.storage import default_storage
@@ -359,6 +359,24 @@ def _to_absolute_url(raw_url: str, base_url: str) -> str:
     if value.startswith("//"):
         return f"https:{value}"
     return urljoin(base_url, value.lstrip("/"))
+
+
+def _to_google_feed_image_url(raw_url: str, base_url: str) -> str:
+    absolute_url = _to_absolute_url(raw_url, base_url)
+    if not re.match(r"^https?://", absolute_url, flags=re.IGNORECASE):
+        return ""
+
+    parts = urlsplit(absolute_url)
+    if not parts.netloc:
+        return ""
+
+    return urlunsplit((
+        parts.scheme,
+        parts.netloc,
+        quote(parts.path, safe="/%:@"),
+        quote(parts.query, safe="=&%:@/?"),
+        "",
+    ))
 
 
 # Google Merchant Center category mapping
@@ -823,7 +841,9 @@ def _build_google_feed_item_xml(
     If size is provided, generates a variant entry with item_group_id.
     """
     product_link = urljoin(frontend_base_url, f"product/{product.slug}/")
-    product_image = _to_absolute_url(getattr(product, "primary_image_url", ""), backend_base_url)
+    product_image = _to_google_feed_image_url(getattr(product, "primary_image_url", ""), backend_base_url)
+    if not product_image:
+        return ""
     description = (product.short_description or product.description or product.name or "").strip()
     availability = "in stock" if product.in_stock else "out of stock"
     brand = (_get_google_feed_manual_value(product, "google_feed_brand") or getattr(product.category, "name", "") or "Reve Living").strip()
@@ -1004,6 +1024,7 @@ def google_feed_xml(request):
 
     primary_image_subquery = (
         ProductImage.objects.filter(product_id=OuterRef("pk"))
+        .exclude(url="")
         .order_by("sort_order", "id")
         .values("url")[:1]
     )

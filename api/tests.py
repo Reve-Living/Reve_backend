@@ -3213,10 +3213,45 @@ class MattressOptionScopedProductTests(TestCase):
 
 
 class GoogleMerchantFeedTests(TestCase):
+    def _add_feed_image(self, product, url="https://example.com/product image.jpg"):
+        ProductImage.objects.create(product=product, url=url)
+
     def _feed_xml(self):
         response = APIClient().get("/google-feed.xml")
         self.assertEqual(response.status_code, 200)
         return b"".join(response.streaming_content).decode("utf-8")
+
+    def test_feed_skips_products_without_google_accessible_image_links(self):
+        category = Category.objects.create(name="TV Units", slug="tv-units-feed-no-image")
+        Product.objects.create(
+            name="Marco White High Gloss TV Unit",
+            slug="marco-white-high-gloss-tv-unit-feed-no-image",
+            category=category,
+            price="249.00",
+            short_description="TV unit without an image.",
+            description="TV unit without an image description.",
+        )
+
+        xml = self._feed_xml()
+
+        self.assertNotIn("Marco White High Gloss TV Unit", xml)
+        self.assertNotIn("<g:image_link></g:image_link>", xml)
+
+    def test_feed_url_encodes_image_links(self):
+        category = Category.objects.create(name="TV Units", slug="tv-units-feed-image-encoding")
+        product = Product.objects.create(
+            name="Image Encoding TV Unit",
+            slug="image-encoding-tv-unit-feed",
+            category=category,
+            price="249.00",
+            short_description="TV unit with encoded image.",
+            description="TV unit with encoded image description.",
+        )
+        self._add_feed_image(product, "https://example.com/media/product image & angle.jpg")
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:image_link>https://example.com/media/product%20image%20%26%20angle.jpg</g:image_link>", xml)
 
     def test_bed_subcategory_feed_uses_lowest_product_price_once(self):
         category = Category.objects.create(name="Beds", slug="beds-feed")
@@ -3230,6 +3265,7 @@ class GoogleMerchantFeedTests(TestCase):
             short_description="Divan bed",
             description="Divan bed description",
         )
+        self._add_feed_image(product)
         ProductSize.objects.create(product=product, name="Double", description="4ft6", price_delta="0.00")
         ProductSize.objects.create(product=product, name="Super King", description="6ft", price_delta="600.00")
 
@@ -3250,6 +3286,7 @@ class GoogleMerchantFeedTests(TestCase):
             short_description="Chair",
             description="Chair description",
         )
+        self._add_feed_image(product)
         ProductSize.objects.create(product=product, name="Standard", description="", price_delta="199.99")
         ProductSize.objects.create(product=product, name="Large", description="", price_delta="249.99")
 
@@ -3270,6 +3307,7 @@ class GoogleMerchantFeedTests(TestCase):
             short_description="Firm mattress",
             description="Firm mattress description",
         )
+        self._add_feed_image(product)
         ProductSize.objects.create(product=product, name="3ft Single", description="", price_delta="169.00")
         ProductSize.objects.create(product=product, name="4ft6 Double", description="", price_delta="338.00")
 
@@ -3298,6 +3336,7 @@ class GoogleMerchantFeedTests(TestCase):
                 {"measurement": "Length", "values": {"Overall": "152 cm"}},
             ],
         )
+        self._add_feed_image(product)
         ProductColor.objects.create(product=product, name="Dark Grey", hex_code="#444444")
         ProductFabric.objects.create(product=product, name="Fabric", image_url="https://example.com/fabric.jpg")
         filter_type = FilterType.objects.create(name="Fabric Type", slug="fabric-type-feed-details")
@@ -3333,6 +3372,7 @@ class GoogleMerchantFeedTests(TestCase):
                 {"measurement": "Seat Height", "values": {"Standard": "45 cm", "Tall": "50 cm"}},
             ],
         )
+        self._add_feed_image(product)
         ProductSize.objects.create(product=product, name="Standard", description="", price_delta="199.99")
         ProductSize.objects.create(product=product, name="Tall", description="", price_delta="249.99")
 
@@ -3350,7 +3390,7 @@ class GoogleMerchantFeedTests(TestCase):
             slug="reclining-sofas-feed-title-extraction",
             category=category,
         )
-        Product.objects.create(
+        product = Product.objects.create(
             name="Turin 2 Seater Dark Grey Fabric Recliner",
             slug="turin-2-seater-dark-grey-fabric-recliner-feed",
             category=category,
@@ -3359,6 +3399,7 @@ class GoogleMerchantFeedTests(TestCase):
             short_description="Comfortable recliner sofa.",
             description="Comfortable recliner sofa description.",
         )
+        self._add_feed_image(product)
 
         xml = self._feed_xml()
 
@@ -3377,7 +3418,7 @@ class GoogleMerchantFeedTests(TestCase):
             slug="reclining-sofas-feed-dimension-paragraph",
             category=category,
         )
-        Product.objects.create(
+        product = Product.objects.create(
             name="Hannah Grey Fabric Corner Recliner Sofa",
             slug="hannah-grey-fabric-corner-recliner-sofa-feed",
             category=category,
@@ -3387,6 +3428,7 @@ class GoogleMerchantFeedTests(TestCase):
             description="Grey fabric recliner sofa description.",
             dimension_paragraph="Length: 270 cm\n\nWidth: 235 cm\n\nDepth: 90 cm\n\nHeight: 90 cm\n\nSeat Height: 48 cm",
         )
+        self._add_feed_image(product)
 
         xml = self._feed_xml()
 
@@ -3406,7 +3448,7 @@ class GoogleMerchantFeedTests(TestCase):
             slug="reclining-sofas-feed-width-length",
             category=category,
         )
-        Product.objects.create(
+        product = Product.objects.create(
             name="Turin Grey Aire Leather Manual Recliner Armchair",
             slug="turin-grey-aire-leather-manual-recliner-armchair-feed",
             category=category,
@@ -3416,6 +3458,7 @@ class GoogleMerchantFeedTests(TestCase):
             description="Grey aire leather recliner armchair description.",
             dimension_paragraph="Width: 96 cm\n\nDepth: 97 cm\n\nHeight: 102 cm",
         )
+        self._add_feed_image(product)
 
         xml = self._feed_xml()
 
@@ -3441,6 +3484,7 @@ class GoogleMerchantFeedTests(TestCase):
             short_description="Grey aire leather recliner sofa.",
             description="Grey aire leather recliner sofa description.",
         )
+        self._add_feed_image(product)
         ProductColor.objects.create(product=product, name="Black Family", hex_code="#000000")
 
         xml = self._feed_xml()
@@ -3473,6 +3517,7 @@ class GoogleMerchantFeedTests(TestCase):
             google_feed_length="205 cm",
             google_feed_seat_height="48 cm",
         )
+        self._add_feed_image(product)
         ProductColor.objects.create(product=product, name="Black Family", hex_code="#000000")
 
         xml = self._feed_xml()
@@ -3498,7 +3543,7 @@ class GoogleMerchantFeedTests(TestCase):
             slug="reclining-sofas-feed-frame-material",
             category=category,
         )
-        Product.objects.create(
+        product = Product.objects.create(
             name="Roma Recliner Sofa",
             slug="roma-recliner-sofa-feed-frame-material",
             category=category,
@@ -3507,6 +3552,7 @@ class GoogleMerchantFeedTests(TestCase):
             short_description="Recliner sofa with a metal frame.",
             description="This recliner sofa has a metal frame and fabric upholstery.",
         )
+        self._add_feed_image(product)
 
         xml = self._feed_xml()
 
