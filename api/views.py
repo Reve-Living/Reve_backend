@@ -1201,7 +1201,7 @@ class AdminSummaryView(APIView):
         # Orders and revenue
         from .models import Order, Product
 
-        revenue_orders = Order.objects.exclude(status="cancelled").exclude(refund_status="succeeded")
+        revenue_orders = Order.objects.filter(status__in=("paid", "shipped", "delivered")).exclude(refund_status="succeeded")
         orders_current = revenue_orders.filter(created_at__gte=start_of_month)
         orders_prev = revenue_orders.filter(created_at__gte=prev_month_start, created_at__lte=prev_month_end)
 
