@@ -1201,16 +1201,17 @@ class AdminSummaryView(APIView):
         # Orders and revenue
         from .models import Order, Product
 
-        orders_current = Order.objects.filter(created_at__gte=start_of_month)
-        orders_prev = Order.objects.filter(created_at__gte=prev_month_start, created_at__lte=prev_month_end)
+        revenue_orders = Order.objects.exclude(status="cancelled").exclude(refund_status="succeeded")
+        orders_current = revenue_orders.filter(created_at__gte=start_of_month)
+        orders_prev = revenue_orders.filter(created_at__gte=prev_month_start, created_at__lte=prev_month_end)
 
         total_revenue = float(
-            Order.objects.aggregate(total=Sum("total_amount"))["total"] or 0
+            revenue_orders.aggregate(total=Sum("total_amount"))["total"] or 0
         )
         revenue_current = float(orders_current.aggregate(total=Sum("total_amount"))["total"] or 0)
         revenue_prev = float(orders_prev.aggregate(total=Sum("total_amount"))["total"] or 0)
 
-        total_orders = Order.objects.count()
+        total_orders = revenue_orders.count()
         total_products = Product.objects.count()
 
         # Customers = non-staff, non-superuser accounts
