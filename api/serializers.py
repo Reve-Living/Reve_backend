@@ -650,6 +650,8 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
             "meta_title",
             "meta_description",
             "google_feed_brand",
+            "google_feed_sku",
+            "google_feed_special_feature",
             "google_feed_color",
             "google_feed_material",
             "google_feed_fabric_type",
@@ -661,6 +663,7 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
             "google_feed_width",
             "google_feed_height",
             "google_feed_seat_height",
+            "google_feed_variants",
             "category",
             "subcategory",
             "price",
@@ -1304,6 +1307,21 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             "slug",
             "meta_title",
             "meta_description",
+            "google_feed_brand",
+            "google_feed_sku",
+            "google_feed_special_feature",
+            "google_feed_color",
+            "google_feed_material",
+            "google_feed_fabric_type",
+            "google_feed_frame_material",
+            "google_feed_headboard_material",
+            "google_feed_number_of_drawers",
+            "google_feed_depth",
+            "google_feed_length",
+            "google_feed_width",
+            "google_feed_height",
+            "google_feed_seat_height",
+            "google_feed_variants",
             "category",
             "subcategory",
             "price",
@@ -1386,6 +1404,8 @@ class ProductWriteSerializer(serializers.ModelSerializer):
 
         google_feed_fields = (
             "google_feed_brand",
+            "google_feed_sku",
+            "google_feed_special_feature",
             "google_feed_color",
             "google_feed_material",
             "google_feed_fabric_type",
@@ -1401,6 +1421,24 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         for field_name in google_feed_fields:
             if field_name in attrs:
                 attrs[field_name] = str(attrs.get(field_name) or "").strip()
+
+        if "google_feed_variants" in attrs:
+            raw_variants = attrs.get("google_feed_variants") or []
+            cleaned_variants = []
+            if isinstance(raw_variants, list):
+                for variant in raw_variants:
+                    if not isinstance(variant, dict):
+                        continue
+                    cleaned_variant = {
+                        "color": str(variant.get("color") or "").strip(),
+                        "fabric": str(variant.get("fabric") or "").strip(),
+                        "size": str(variant.get("size") or "").strip(),
+                        "sku": str(variant.get("sku") or "").strip(),
+                        "price": str(variant.get("price") or "").strip(),
+                    }
+                    if any(cleaned_variant.values()):
+                        cleaned_variants.append(cleaned_variant)
+            attrs["google_feed_variants"] = cleaned_variants
 
         if not short_description and isinstance(description, str) and description:
             first_sentence = description.split(".")[0].strip()

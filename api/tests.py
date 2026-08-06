@@ -3536,6 +3536,46 @@ class GoogleMerchantFeedTests(TestCase):
         self.assertIn("<g:attribute_value>48 cm</g:attribute_value>", xml)
         self.assertNotIn("<g:color>Black Family</g:color>", xml)
 
+    def test_feed_outputs_manual_google_merchant_variants(self):
+        category = Category.objects.create(name="Beds", slug="beds-feed-manual-variants")
+        product = Product.objects.create(
+            name="Manual Variant Storage Bed",
+            slug="manual-variant-storage-bed",
+            category=category,
+            price="399.00",
+            short_description="Manual variant storage bed.",
+            description="Manual variant storage bed description.",
+            google_feed_brand="Reve Living",
+            google_feed_sku="BASE-SKU",
+            google_feed_special_feature="Storage",
+            google_feed_material="Wood",
+            google_feed_variants=[
+                {"color": "White", "fabric": "", "size": "Single", "sku": "BED-WHT-S", "price": "429.00"},
+                {"color": "Anthracite", "fabric": "", "size": "Single", "sku": "BED-ANT-S", "price": "449.00"},
+            ],
+        )
+        self._add_feed_image(product)
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:id>BED-WHT-S</g:id>", xml)
+        self.assertIn("<g:id>BED-ANT-S</g:id>", xml)
+        self.assertIn("<g:title>Manual Variant Storage Bed - White - Single</g:title>", xml)
+        self.assertIn("<g:title>Manual Variant Storage Bed - Anthracite - Single</g:title>", xml)
+        self.assertIn("<g:item_group_id>{}</g:item_group_id>".format(product.id), xml)
+        self.assertIn("<g:mpn>BED-WHT-S</g:mpn>", xml)
+        self.assertIn("<g:attribute_name>SKU</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>BED-WHT-S</g:attribute_value>", xml)
+        self.assertIn("<g:price>429.00 GBP</g:price>", xml)
+        self.assertIn("<g:price>449.00 GBP</g:price>", xml)
+        self.assertIn("<g:color>White</g:color>", xml)
+        self.assertIn("<g:color>Anthracite</g:color>", xml)
+        self.assertIn("<g:size>Single</g:size>", xml)
+        self.assertIn("<g:attribute_name>Special Feature</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>Storage</g:attribute_value>", xml)
+        self.assertIn("<g:custom_label_0>Storage</g:custom_label_0>", xml)
+        self.assertNotIn("<g:id>{}</g:id>".format(product.id), xml)
+
     def test_feed_only_adds_frame_material_when_explicitly_stated(self):
         category = Category.objects.create(name="Sofas", slug="sofas-feed-frame-material")
         subcategory = SubCategory.objects.create(

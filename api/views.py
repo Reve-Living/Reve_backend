@@ -563,6 +563,46 @@ def _get_google_feed_manual_value(product, field_name: str) -> str:
     return str(getattr(product, field_name, "") or "").strip()
 
 
+def _get_google_feed_variant_value(variant: dict | None, field_name: str) -> str:
+    if not isinstance(variant, dict):
+        return ""
+    return str(variant.get(field_name) or "").strip()
+
+
+def _get_google_feed_manual_variants(product) -> list:
+    raw_variants = getattr(product, "google_feed_variants", []) or []
+    if not isinstance(raw_variants, list):
+        return []
+
+    variants = []
+    for variant in raw_variants:
+        if not isinstance(variant, dict):
+            continue
+        cleaned_variant = {
+            "color": _get_google_feed_variant_value(variant, "color"),
+            "fabric": _get_google_feed_variant_value(variant, "fabric"),
+            "size": _get_google_feed_variant_value(variant, "size"),
+            "sku": _get_google_feed_variant_value(variant, "sku"),
+            "price": _get_google_feed_variant_value(variant, "price"),
+        }
+        if any(cleaned_variant.values()):
+            variants.append(cleaned_variant)
+    return variants
+
+
+def _get_google_feed_variant_price(variant: dict | None) -> Decimal | None:
+    raw_price = _get_google_feed_variant_value(variant, "price")
+    if not raw_price:
+        return None
+    try:
+        price = Decimal(raw_price)
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if price <= 0:
+        return None
+    return price
+
+
 def _get_google_feed_extra_attributes(product, materials) -> dict:
     product_text = _get_google_feed_product_text(product)
     is_bed = "bed" in product_text and "sofa bed" not in product_text
@@ -832,6 +872,8 @@ def _append_google_feed_product_detail_xml(lines: list, detail: dict) -> None:
 def _build_google_feed_item_xml(
     product,
     size=None,
+    manual_variant: dict | None = None,
+    manual_variant_index: int | None = None,
     frontend_base_url: str = "",
     backend_base_url: str = "",
     price_override: Decimal | None = None,
@@ -849,19 +891,33 @@ def _build_google_feed_item_xml(
     brand = (_get_google_feed_manual_value(product, "google_feed_brand") or getattr(product.category, "name", "") or "Reve Living").strip()
     
     # ProductSize.price_delta stores the actual size price used by the storefront.
-    price = Decimal(price_override) if price_override is not None else Decimal(product.price)
+    variant_price = _get_google_feed_variant_price(manual_variant)
+    price = Decimal(price_override) if price_override is not None else (variant_price if variant_price is not None else Decimal(product.price))
     if price_override is None and size and hasattr(size, "price_delta") and size.price_delta:
         price = Decimal(size.price_delta)
     price_text = f"{price.quantize(TWOPLACES)} GBP"
     
     # ID generation
-    if size:
+    variant_sku = _get_google_feed_variant_value(manual_variant, "sku")
+    base_sku = _get_google_feed_manual_value(product, "google_feed_sku")
+    feed_sku = variant_sku or base_sku
+    if manual_variant:
+        item_id = variant_sku or f"{product.id}-v{manual_variant_index or 1}"
+        mpn = variant_sku or f"REVE-{product.id}-V{manual_variant_index or 1}"
+        variant_title_parts = [
+            _get_google_feed_variant_value(manual_variant, "color"),
+            _get_google_feed_variant_value(manual_variant, "fabric"),
+            _get_google_feed_variant_value(manual_variant, "size"),
+        ]
+        variant_title_suffix = " - ".join(part for part in variant_title_parts if part)
+        title = f"{product.name} - {variant_title_suffix}" if variant_title_suffix else product.name
+    elif size:
         item_id = f"{product.id}-{size.id}"
         mpn = f"REVE-{product.id}-{size.id}"
         title = f"{product.name} - {size.name}"
     else:
         item_id = product.id
-        mpn = f"REVE-{product.id}"
+        mpn = base_sku or f"REVE-{product.id}"
         title = product.name
     
     # Collect fabric/material info
@@ -888,10 +944,16 @@ def _build_google_feed_item_xml(
     title_color_names = _extract_google_feed_phrase_values(product_name_text, GOOGLE_FEED_COLOUR_PHRASES)
     extracted_color_names = _extract_google_feed_phrase_values(product_text, GOOGLE_FEED_COLOUR_PHRASES)
     manual_color = _get_google_feed_manual_value(product, "google_feed_color")
+    variant_color = _get_google_feed_variant_value(manual_variant, "color")
+    if variant_color:
+        manual_color = variant_color
     if manual_color:
         title_color_names = [manual_color]
     color_names = title_color_names or color_names or filter_color_names or extracted_color_names
     manual_fabric_type = _get_google_feed_manual_value(product, "google_feed_fabric_type")
+    variant_fabric = _get_google_feed_variant_value(manual_variant, "fabric")
+    if variant_fabric:
+        manual_fabric_type = variant_fabric
     extracted_fabric_names = [manual_fabric_type] if manual_fabric_type else ([] if material_text else _extract_google_feed_phrase_values(product_text, GOOGLE_FEED_FABRIC_TYPE_PHRASES))
     color_text = color_names[0] if color_names else ""
     detail_color_text = ", ".join(color_names) if color_names else ""
@@ -915,10 +977,10 @@ def _build_google_feed_item_xml(
         extracted_fabric_text=extracted_fabric_text,
     )
     
-    # Check if product has storage (custom label)
-    has_storage = False
-    if hasattr(product, "description") and "storage" in product.description.lower():
-        has_storage = True
+    special_feature = _get_google_feed_manual_value(product, "google_feed_special_feature")
+    has_storage = "storage" in special_feature.lower() or (
+        not special_feature and hasattr(product, "description") and "storage" in product.description.lower()
+    )
     
     lines = [
         "    <item>",
@@ -937,9 +999,14 @@ def _build_google_feed_item_xml(
     ]
     
     # Add size if this is a variant
-    if size:
+    if manual_variant:
+        lines.append(f"      <g:item_group_id>{product.id}</g:item_group_id>")
+    elif size:
         lines.append(f"      <g:item_group_id>{product.id}</g:item_group_id>")
         lines.append(f"      <g:size>{escape(size.name)}</g:size>")
+    variant_size = _get_google_feed_variant_value(manual_variant, "size")
+    if variant_size:
+        lines.append(f"      <g:size>{escape(variant_size)}</g:size>")
     
     # Add material
     if material_text:
@@ -954,6 +1021,20 @@ def _build_google_feed_item_xml(
     
     for detail in product_details:
         _append_google_feed_product_detail_xml(lines, detail)
+
+    if feed_sku:
+        _append_google_feed_product_detail_xml(lines, {
+            "section_name": "General",
+            "attribute_name": "SKU",
+            "attribute_value": feed_sku,
+        })
+
+    if special_feature:
+        _append_google_feed_product_detail_xml(lines, {
+            "section_name": "General",
+            "attribute_name": "Special Feature",
+            "attribute_value": special_feature,
+        })
     
     # Add color
     if color_text:
@@ -964,7 +1045,9 @@ def _build_google_feed_item_xml(
     lines.append("      <g:gender>unisex</g:gender>")
     
     # Add custom label for products with storage
-    if has_storage:
+    if special_feature:
+        lines.append(f"      <g:custom_label_0>{escape(special_feature)}</g:custom_label_0>")
+    elif has_storage:
         lines.append("      <g:custom_label_0>Has Storage</g:custom_label_0>")
     
     lines.append("    </item>")
@@ -987,6 +1070,17 @@ def _build_google_feed_items_xml(product, frontend_base_url: str, backend_base_u
     product._prefetched_filter_values = filter_values
     
     items_xml = ""
+    manual_variants = _get_google_feed_manual_variants(product)
+    if manual_variants:
+        for index, variant in enumerate(manual_variants, start=1):
+            items_xml += _build_google_feed_item_xml(
+                product,
+                manual_variant=variant,
+                manual_variant_index=index,
+                frontend_base_url=frontend_base_url,
+                backend_base_url=backend_base_url,
+            )
+        return items_xml
 
     if _uses_lowest_google_feed_price(product):
         lowest_price = _get_lowest_google_feed_price(product, sizes)
@@ -1033,7 +1127,7 @@ def google_feed_xml(request):
         .select_related("category", "subcategory")
         .prefetch_related("sizes", "colors", "fabrics", "filter_values__filter_option__filter_type")
         .annotate(primary_image_url=Subquery(primary_image_subquery))
-        .only("id", "name", "slug", "description", "short_description", "features", "dimensions", "dimension_paragraph", "dimension_note", "google_feed_brand", "google_feed_color", "google_feed_material", "google_feed_fabric_type", "google_feed_frame_material", "google_feed_headboard_material", "google_feed_number_of_drawers", "google_feed_depth", "google_feed_length", "google_feed_width", "google_feed_height", "google_feed_seat_height", "price", "in_stock", "category__name", "subcategory__name")
+        .only("id", "name", "slug", "description", "short_description", "features", "dimensions", "dimension_paragraph", "dimension_note", "google_feed_brand", "google_feed_sku", "google_feed_special_feature", "google_feed_color", "google_feed_material", "google_feed_fabric_type", "google_feed_frame_material", "google_feed_headboard_material", "google_feed_number_of_drawers", "google_feed_depth", "google_feed_length", "google_feed_width", "google_feed_height", "google_feed_seat_height", "google_feed_variants", "price", "in_stock", "category__name", "subcategory__name")
         .order_by("id")
     )
 
@@ -2742,6 +2836,8 @@ class ProductViewSet(viewsets.ModelViewSet):
             meta_title=source.meta_title,
             meta_description=source.meta_description,
             google_feed_brand=source.google_feed_brand,
+            google_feed_sku=source.google_feed_sku,
+            google_feed_special_feature=source.google_feed_special_feature,
             google_feed_color=source.google_feed_color,
             google_feed_material=source.google_feed_material,
             google_feed_fabric_type=source.google_feed_fabric_type,
@@ -2753,6 +2849,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             google_feed_width=source.google_feed_width,
             google_feed_height=source.google_feed_height,
             google_feed_seat_height=source.google_feed_seat_height,
+            google_feed_variants=source.google_feed_variants,
             category=category,
             subcategory=subcategory,
             imported_from_product=imported_from_product,

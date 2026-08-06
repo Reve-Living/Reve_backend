@@ -209,6 +209,8 @@ class Product(models.Model):
     meta_title = models.CharField(max_length=255, blank=True, default="")
     meta_description = models.TextField(blank=True, default="")
     google_feed_brand = models.CharField(max_length=120, blank=True, default="")
+    google_feed_sku = models.CharField(max_length=120, blank=True, default="")
+    google_feed_special_feature = models.CharField(max_length=120, blank=True, default="")
     google_feed_color = models.CharField(max_length=120, blank=True, default="")
     google_feed_material = models.CharField(max_length=180, blank=True, default="")
     google_feed_fabric_type = models.CharField(max_length=180, blank=True, default="")
@@ -220,6 +222,7 @@ class Product(models.Model):
     google_feed_width = models.CharField(max_length=80, blank=True, default="")
     google_feed_height = models.CharField(max_length=80, blank=True, default="")
     google_feed_seat_height = models.CharField(max_length=80, blank=True, default="")
+    google_feed_variants = models.JSONField(default=list, blank=True)
     category = models.ForeignKey(Category, related_name="products", on_delete=models.CASCADE)
     subcategory = models.ForeignKey(
         SubCategory, related_name="products", on_delete=models.SET_NULL, null=True, blank=True
