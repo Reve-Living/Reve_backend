@@ -3547,11 +3547,13 @@ class GoogleMerchantFeedTests(TestCase):
             description="Manual variant storage bed description.",
             google_feed_brand="Reve Living",
             google_feed_sku="BASE-SKU",
+            google_feed_mpn="BASE-MPN",
+            google_feed_gtin="05012345678903",
             google_feed_special_feature="Storage",
             google_feed_material="Wood",
             google_feed_variants=[
-                {"color": "White", "fabric": "", "size": "Single", "sku": "BED-WHT-S", "price": "429.00"},
-                {"color": "Anthracite", "fabric": "", "size": "Single", "sku": "BED-ANT-S", "price": "449.00"},
+                {"color": "White", "fabric": "", "size": "Single", "sku": "BED-WHT-S", "mpn": "MPN-WHT-S", "gtin": "05012345678910", "price": "429.00"},
+                {"color": "Anthracite", "fabric": "", "size": "Single", "sku": "BED-ANT-S", "mpn": "MPN-ANT-S", "gtin": "05012345678927", "price": "449.00"},
             ],
         )
         self._add_feed_image(product)
@@ -3563,9 +3565,14 @@ class GoogleMerchantFeedTests(TestCase):
         self.assertIn("<g:title>Manual Variant Storage Bed - White - Single</g:title>", xml)
         self.assertIn("<g:title>Manual Variant Storage Bed - Anthracite - Single</g:title>", xml)
         self.assertIn("<g:item_group_id>{}</g:item_group_id>".format(product.id), xml)
-        self.assertIn("<g:mpn>BED-WHT-S</g:mpn>", xml)
+        self.assertIn("<g:mpn>MPN-WHT-S</g:mpn>", xml)
+        self.assertIn("<g:gtin>05012345678910</g:gtin>", xml)
         self.assertIn("<g:attribute_name>SKU</g:attribute_name>", xml)
         self.assertIn("<g:attribute_value>BED-WHT-S</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_name>MPN</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>MPN-WHT-S</g:attribute_value>", xml)
+        self.assertIn("<g:attribute_name>GTIN</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>05012345678910</g:attribute_value>", xml)
         self.assertIn("<g:price>429.00 GBP</g:price>", xml)
         self.assertIn("<g:price>449.00 GBP</g:price>", xml)
         self.assertIn("<g:color>White</g:color>", xml)

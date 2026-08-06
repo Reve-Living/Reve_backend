@@ -210,6 +210,8 @@ class Product(models.Model):
     meta_description = models.TextField(blank=True, default="")
     google_feed_brand = models.CharField(max_length=120, blank=True, default="")
     google_feed_sku = models.CharField(max_length=120, blank=True, default="")
+    google_feed_mpn = models.CharField(max_length=120, blank=True, default="")
+    google_feed_gtin = models.CharField(max_length=120, blank=True, default="")
     google_feed_special_feature = models.CharField(max_length=120, blank=True, default="")
     google_feed_color = models.CharField(max_length=120, blank=True, default="")
     google_feed_material = models.CharField(max_length=180, blank=True, default="")

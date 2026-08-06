@@ -583,6 +583,8 @@ def _get_google_feed_manual_variants(product) -> list:
             "fabric": _get_google_feed_variant_value(variant, "fabric"),
             "size": _get_google_feed_variant_value(variant, "size"),
             "sku": _get_google_feed_variant_value(variant, "sku"),
+            "mpn": _get_google_feed_variant_value(variant, "mpn"),
+            "gtin": _get_google_feed_variant_value(variant, "gtin"),
             "price": _get_google_feed_variant_value(variant, "price"),
         }
         if any(cleaned_variant.values()):
@@ -899,11 +901,17 @@ def _build_google_feed_item_xml(
     
     # ID generation
     variant_sku = _get_google_feed_variant_value(manual_variant, "sku")
+    variant_mpn = _get_google_feed_variant_value(manual_variant, "mpn")
+    variant_gtin = _get_google_feed_variant_value(manual_variant, "gtin")
     base_sku = _get_google_feed_manual_value(product, "google_feed_sku")
+    base_mpn = _get_google_feed_manual_value(product, "google_feed_mpn")
+    base_gtin = _get_google_feed_manual_value(product, "google_feed_gtin")
     feed_sku = variant_sku or base_sku
+    feed_mpn = variant_mpn or base_mpn
+    feed_gtin = variant_gtin or base_gtin
     if manual_variant:
         item_id = variant_sku or f"{product.id}-v{manual_variant_index or 1}"
-        mpn = variant_sku or f"REVE-{product.id}-V{manual_variant_index or 1}"
+        mpn = feed_mpn or variant_sku or f"REVE-{product.id}-V{manual_variant_index or 1}"
         variant_title_parts = [
             _get_google_feed_variant_value(manual_variant, "color"),
             _get_google_feed_variant_value(manual_variant, "fabric"),
@@ -913,11 +921,11 @@ def _build_google_feed_item_xml(
         title = f"{product.name} - {variant_title_suffix}" if variant_title_suffix else product.name
     elif size:
         item_id = f"{product.id}-{size.id}"
-        mpn = f"REVE-{product.id}-{size.id}"
+        mpn = feed_mpn or f"REVE-{product.id}-{size.id}"
         title = f"{product.name} - {size.name}"
     else:
         item_id = product.id
-        mpn = base_sku or f"REVE-{product.id}"
+        mpn = feed_mpn or base_sku or f"REVE-{product.id}"
         title = product.name
     
     # Collect fabric/material info
@@ -997,6 +1005,8 @@ def _build_google_feed_item_xml(
         f"      <g:google_product_category>{escape(google_category)}</g:google_product_category>",
         f"      <g:product_type>{escape(product_type)}</g:product_type>",
     ]
+    if feed_gtin:
+        lines.append(f"      <g:gtin>{escape(feed_gtin)}</g:gtin>")
     
     # Add size if this is a variant
     if manual_variant:
@@ -1027,6 +1037,18 @@ def _build_google_feed_item_xml(
             "section_name": "General",
             "attribute_name": "SKU",
             "attribute_value": feed_sku,
+        })
+    if feed_mpn:
+        _append_google_feed_product_detail_xml(lines, {
+            "section_name": "General",
+            "attribute_name": "MPN",
+            "attribute_value": feed_mpn,
+        })
+    if feed_gtin:
+        _append_google_feed_product_detail_xml(lines, {
+            "section_name": "General",
+            "attribute_name": "GTIN",
+            "attribute_value": feed_gtin,
         })
 
     if special_feature:
@@ -1127,7 +1149,7 @@ def google_feed_xml(request):
         .select_related("category", "subcategory")
         .prefetch_related("sizes", "colors", "fabrics", "filter_values__filter_option__filter_type")
         .annotate(primary_image_url=Subquery(primary_image_subquery))
-        .only("id", "name", "slug", "description", "short_description", "features", "dimensions", "dimension_paragraph", "dimension_note", "google_feed_brand", "google_feed_sku", "google_feed_special_feature", "google_feed_color", "google_feed_material", "google_feed_fabric_type", "google_feed_frame_material", "google_feed_headboard_material", "google_feed_number_of_drawers", "google_feed_depth", "google_feed_length", "google_feed_width", "google_feed_height", "google_feed_seat_height", "google_feed_variants", "price", "in_stock", "category__name", "subcategory__name")
+        .only("id", "name", "slug", "description", "short_description", "features", "dimensions", "dimension_paragraph", "dimension_note", "google_feed_brand", "google_feed_sku", "google_feed_mpn", "google_feed_gtin", "google_feed_special_feature", "google_feed_color", "google_feed_material", "google_feed_fabric_type", "google_feed_frame_material", "google_feed_headboard_material", "google_feed_number_of_drawers", "google_feed_depth", "google_feed_length", "google_feed_width", "google_feed_height", "google_feed_seat_height", "google_feed_variants", "price", "in_stock", "category__name", "subcategory__name")
         .order_by("id")
     )
 
@@ -2837,6 +2859,8 @@ class ProductViewSet(viewsets.ModelViewSet):
             meta_description=source.meta_description,
             google_feed_brand=source.google_feed_brand,
             google_feed_sku=source.google_feed_sku,
+            google_feed_mpn=source.google_feed_mpn,
+            google_feed_gtin=source.google_feed_gtin,
             google_feed_special_feature=source.google_feed_special_feature,
             google_feed_color=source.google_feed_color,
             google_feed_material=source.google_feed_material,
