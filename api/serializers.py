@@ -1281,6 +1281,25 @@ class ProductAdminPickerSerializer(serializers.ModelSerializer):
 
 
 class ProductWriteSerializer(serializers.ModelSerializer):
+    GOOGLE_FEED_FIELD_MAX_LENGTHS = {
+        "google_feed_brand": 120,
+        "google_feed_sku": 120,
+        "google_feed_mpn": 120,
+        "google_feed_gtin": 120,
+        "google_feed_special_feature": 120,
+        "google_feed_color": 120,
+        "google_feed_material": 180,
+        "google_feed_fabric_type": 180,
+        "google_feed_frame_material": 180,
+        "google_feed_headboard_material": 180,
+        "google_feed_number_of_drawers": 20,
+        "google_feed_depth": 80,
+        "google_feed_length": 80,
+        "google_feed_width": 80,
+        "google_feed_height": 80,
+        "google_feed_seat_height": 80,
+    }
+
     slug = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -1371,6 +1390,16 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             "sort_order",
         )
 
+    def to_internal_value(self, data):
+        if hasattr(data, "copy"):
+            data = data.copy()
+        else:
+            data = dict(data)
+        for field_name, max_length in self.GOOGLE_FEED_FIELD_MAX_LENGTHS.items():
+            if field_name in data:
+                data[field_name] = str(data.get(field_name) or "").strip()[:max_length]
+        return super().to_internal_value(data)
+
     def _generate_unique_slug(self, raw_value: str) -> str:
         max_length = Product._meta.get_field("slug").max_length or 50
         base_slug = (slugify(raw_value) or "product")[:max_length]
@@ -1406,27 +1435,9 @@ class ProductWriteSerializer(serializers.ModelSerializer):
         if isinstance(short_description, str):
             short_description = short_description.strip()
 
-        google_feed_fields = (
-            "google_feed_brand",
-            "google_feed_sku",
-            "google_feed_mpn",
-            "google_feed_gtin",
-            "google_feed_special_feature",
-            "google_feed_color",
-            "google_feed_material",
-            "google_feed_fabric_type",
-            "google_feed_frame_material",
-            "google_feed_headboard_material",
-            "google_feed_number_of_drawers",
-            "google_feed_depth",
-            "google_feed_length",
-            "google_feed_width",
-            "google_feed_height",
-            "google_feed_seat_height",
-        )
-        for field_name in google_feed_fields:
+        for field_name, max_length in self.GOOGLE_FEED_FIELD_MAX_LENGTHS.items():
             if field_name in attrs:
-                attrs[field_name] = str(attrs.get(field_name) or "").strip()
+                attrs[field_name] = str(attrs.get(field_name) or "").strip()[:max_length]
 
         if "google_feed_variants" in attrs:
             raw_variants = attrs.get("google_feed_variants") or []
