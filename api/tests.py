@@ -1678,10 +1678,17 @@ class ProductDuplicateTests(TestCase):
             {"category": target_category.id, "subcategory": target_subcategory.id},
             format="json",
         )
+        copy_source_response = client.post(
+            f"/api/products/{first_response.data['id']}/import-copy/",
+            {"category": target_category.id, "subcategory": target_subcategory.id},
+            format="json",
+        )
 
         self.assertEqual(first_response.status_code, 201)
         self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(copy_source_response.status_code, 200)
         self.assertEqual(first_response.data["id"], second_response.data["id"])
+        self.assertEqual(first_response.data["id"], copy_source_response.data["id"])
         self.assertEqual(
             Product.objects.filter(
                 imported_from_product_id=source_product.id,

@@ -1213,18 +1213,15 @@ class AdminSummaryView(APIView):
 
         total_orders = revenue_orders.count()
 
-        # Kids Beds uses linked import copies to place the same logical product
-        # at category and subcategory level. Count those linked rows once on the
-        # dashboard without changing or removing either product record.
-        kids_beds_scope = Q(category__slug="kids-beds") | Q(category__name__iexact="Kids Beds")
-        kids_beds_products = Product.objects.filter(kids_beds_scope).values_list(
-            "id", "name"
+        # Placement copies are one logical product. Products made with the
+        # manual Duplicate button have no import link and count independently.
+        product_rows = Product.objects.values_list(
+            "id", "imported_from_product_id"
         )
-        unique_kids_beds_products = {
-            " ".join(str(name or "").casefold().split()) or f"product:{product_id}"
-            for product_id, name in kids_beds_products
-        }
-        total_products = Product.objects.exclude(kids_beds_scope).count() + len(unique_kids_beds_products)
+        total_products = len({
+            imported_from_product_id or product_id
+            for product_id, imported_from_product_id in product_rows
+        })
 
         # Customers = non-staff, non-superuser accounts
         customers_qs = User.objects.filter(is_staff=False, is_superuser=False)
@@ -1889,6 +1886,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         "slug",
         "category_id",
         "subcategory_id",
+        "imported_from_product_id",
     ]
 
     def _base_queryset(self):
@@ -2779,15 +2777,19 @@ class ProductViewSet(viewsets.ModelViewSet):
                     {"subcategory": f"{target_subcategory.name} is not linked to {target_category.name}."}
                 )
 
-        if source.category_id == category_id and source.subcategory_id == subcategory_id:
-            refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=source.pk)
+        # Always anchor placement copies to the original product. This prevents
+        # copy-of-copy chains and lets repeated assignments reuse one target row.
+        canonical_source = source.imported_from_product or source
+
+        if canonical_source.category_id == category_id and canonical_source.subcategory_id == subcategory_id:
+            refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=canonical_source.pk)
             return Response(
                 ProductSerializer(refreshed, context=self.get_serializer_context()).data,
                 status=status.HTTP_200_OK,
             )
 
         existing_import = Product.objects.filter(
-            imported_from_product_id=source.id,
+            imported_from_product_id=canonical_source.id,
             category_id=category_id,
             subcategory_id=subcategory_id,
         ).first()
@@ -2799,7 +2801,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             )
 
         with transaction.atomic():
-            imported_product = self._import_product_copy(source, target_category, target_subcategory)
+            imported_product = self._import_product_copy(canonical_source, target_category, target_subcategory)
 
         self._invalidate_cache(imported_product)
         refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=imported_product.pk)
