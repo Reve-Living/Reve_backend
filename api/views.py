@@ -1213,9 +1213,18 @@ class AdminSummaryView(APIView):
 
         total_orders = revenue_orders.count()
 
-        # Dashboard inventory total reflects every stored product record. The
-        # Products UI handles presentation-only grouping of placement copies.
-        total_products = Product.objects.count()
+        # Kids Beds was reorganized from a parent-only category into
+        # subcategories, creating linked placement copies. Count those linked
+        # copies once while leaving every other category record untouched.
+        kids_beds_scope = Q(category__slug="kids-beds") | Q(category__name__iexact="Kids Beds")
+        kids_beds_products = Product.objects.filter(kids_beds_scope).values_list(
+            "id", "imported_from_product_id"
+        )
+        unique_kids_beds_products = {
+            imported_from_product_id or product_id
+            for product_id, imported_from_product_id in kids_beds_products
+        }
+        total_products = Product.objects.exclude(kids_beds_scope).count() + len(unique_kids_beds_products)
 
         # Customers = non-staff, non-superuser accounts
         customers_qs = User.objects.filter(is_staff=False, is_superuser=False)
