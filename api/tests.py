@@ -576,6 +576,42 @@ class OrderEmailTests(TestCase):
         )
         self.assertIn("Cancellation Date:", customer_email.body)
 
+    @patch("api.views.refund_stripe_payment")
+    def test_admin_cannot_cancel_or_refund_delivered_order(self, mock_refund_stripe_payment):
+        client = APIClient()
+        admin_user = User.objects.create_user(
+            username="delivered-order-admin",
+            password="password123",
+            email="delivered-admin@example.com",
+            is_staff=True,
+        )
+        client.force_authenticate(user=admin_user)
+        order = Order.objects.create(
+            first_name="Delivered",
+            last_name="Customer",
+            email="delivered@example.com",
+            phone="+44 5555 555555",
+            address="5 Delivered Street",
+            city="London",
+            postal_code="W1 1AA",
+            total_amount="499.99",
+            delivery_charges="0.00",
+            payment_method="card",
+            payment_id="pi_delivered_test",
+            status="delivered",
+        )
+
+        response = client.post(
+            f"/api/orders/{order.id}/mark_cancelled/",
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        order.refresh_from_db()
+        self.assertEqual(order.status, "delivered")
+        self.assertEqual(order.refund_status, "")
+        mock_refund_stripe_payment.assert_not_called()
+
     @patch("api.views.paypal_request")
     @patch("api.views.paypal_access_token")
     def test_paypal_capture_endpoint_marks_order_paid_and_stores_capture_id(self, mock_paypal_access_token, mock_paypal_request):

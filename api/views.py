@@ -4270,6 +4270,11 @@ class OrderViewSet(viewsets.ModelViewSet):
     def mark_cancelled(self, request, pk=None):
         order = self.get_object()
 
+        if order.status in ("delivered", "shipped"):
+            raise ValidationError(
+                {"status": "Delivered orders cannot be cancelled or refunded."}
+            )
+
         if order.status != "cancelled":
             with transaction.atomic():
                 order.status = "cancelled"
