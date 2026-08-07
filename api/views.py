@@ -1213,15 +1213,20 @@ class AdminSummaryView(APIView):
 
         total_orders = revenue_orders.count()
 
-        # Placement copies are one logical product. Products made with the
-        # manual Duplicate button have no import link and count independently.
-        product_rows = Product.objects.values_list(
-            "id", "imported_from_product_id"
-        )
-        total_products = len({
-            imported_from_product_id or product_id
-            for product_id, imported_from_product_id in product_rows
-        })
+        # Collapse only unchanged automatic placement copies. Imported products
+        # that were renamed are independent and continue to count normally.
+        product_rows = list(Product.objects.values_list("id", "name", "imported_from_product_id"))
+        product_names = {
+            product_id: " ".join(str(name or "").casefold().split())
+            for product_id, name, _source_id in product_rows
+        }
+        logical_product_ids = {
+            source_id
+            if source_id and product_names.get(product_id) and product_names.get(product_id) == product_names.get(source_id)
+            else product_id
+            for product_id, _name, source_id in product_rows
+        }
+        total_products = len(logical_product_ids)
 
         # Customers = non-staff, non-superuser accounts
         customers_qs = User.objects.filter(is_staff=False, is_superuser=False)
@@ -1886,7 +1891,6 @@ class ProductViewSet(viewsets.ModelViewSet):
         "slug",
         "category_id",
         "subcategory_id",
-        "imported_from_product_id",
     ]
 
     def _base_queryset(self):
@@ -2779,7 +2783,14 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         # Always anchor placement copies to the original product. This prevents
         # copy-of-copy chains and lets repeated assignments reuse one target row.
-        canonical_source = source.imported_from_product or source
+        linked_source = source.imported_from_product
+        source_name = " ".join(str(source.name or "").casefold().split())
+        linked_source_name = " ".join(str(getattr(linked_source, "name", "") or "").casefold().split())
+        canonical_source = (
+            linked_source
+            if linked_source and source_name and source_name == linked_source_name
+            else source
+        )
 
         if canonical_source.category_id == category_id and canonical_source.subcategory_id == subcategory_id:
             refreshed = self._base_queryset().prefetch_related(*self._detail_prefetches).get(pk=canonical_source.pk)

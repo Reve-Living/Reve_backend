@@ -1264,7 +1264,6 @@ class ProductAdminPickerSerializer(serializers.ModelSerializer):
     subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
     category_slug = serializers.ReadOnlyField(source="category.slug")
     subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
-    imported_from_product = serializers.IntegerField(source="imported_from_product_id", read_only=True, allow_null=True)
 
     class Meta:
         model = Product
@@ -1278,7 +1277,6 @@ class ProductAdminPickerSerializer(serializers.ModelSerializer):
             "subcategory_name",
             "category_slug",
             "subcategory_slug",
-            "imported_from_product",
         ]
 
 
