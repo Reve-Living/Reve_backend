@@ -1212,7 +1212,19 @@ class AdminSummaryView(APIView):
         revenue_prev = float(orders_prev.aggregate(total=Sum("total_amount"))["total"] or 0)
 
         total_orders = revenue_orders.count()
-        total_products = Product.objects.count()
+
+        # Kids Beds uses linked import copies to place the same logical product
+        # at category and subcategory level. Count those linked rows once on the
+        # dashboard without changing or removing either product record.
+        kids_beds_scope = Q(category__slug="kids-beds") | Q(category__name__iexact="Kids Beds")
+        kids_beds_products = Product.objects.filter(kids_beds_scope).values_list(
+            "id", "name"
+        )
+        unique_kids_beds_products = {
+            " ".join(str(name or "").casefold().split()) or f"product:{product_id}"
+            for product_id, name in kids_beds_products
+        }
+        total_products = Product.objects.exclude(kids_beds_scope).count() + len(unique_kids_beds_products)
 
         # Customers = non-staff, non-superuser accounts
         customers_qs = User.objects.filter(is_staff=False, is_superuser=False)
