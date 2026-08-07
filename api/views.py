@@ -1213,20 +1213,9 @@ class AdminSummaryView(APIView):
 
         total_orders = revenue_orders.count()
 
-        # Collapse only unchanged automatic placement copies. Imported products
-        # that were renamed are independent and continue to count normally.
-        product_rows = list(Product.objects.values_list("id", "name", "imported_from_product_id"))
-        product_names = {
-            product_id: " ".join(str(name or "").casefold().split())
-            for product_id, name, _source_id in product_rows
-        }
-        logical_product_ids = {
-            source_id
-            if source_id and product_names.get(product_id) and product_names.get(product_id) == product_names.get(source_id)
-            else product_id
-            for product_id, _name, source_id in product_rows
-        }
-        total_products = len(logical_product_ids)
+        # Dashboard inventory total reflects every stored product record. The
+        # Products UI handles presentation-only grouping of placement copies.
+        total_products = Product.objects.count()
 
         # Customers = non-staff, non-superuser accounts
         customers_qs = User.objects.filter(is_staff=False, is_superuser=False)
