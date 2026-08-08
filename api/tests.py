@@ -3254,6 +3254,33 @@ class MattressOptionScopedProductTests(TestCase):
             self.category_wide_option.display_name,
         )
 
+    def test_kids_beds_placement_copy_inherits_source_product_mattresses_once(self):
+        subcategory = SubCategory.objects.create(
+            category=self.category,
+            name="All Kids Beds",
+            slug="all-kids-beds-mattress-scope",
+            sort_order=1,
+        )
+        placement_copy = Product.objects.create(
+            name=self.product_one.name,
+            slug="vision-white-bunk-bed-placement-copy",
+            category=self.category,
+            subcategory=subcategory,
+            imported_from_product=self.product_one,
+            price=self.product_one.price,
+            short_description=self.product_one.short_description,
+            description=self.product_one.description,
+            in_stock=True,
+            is_hidden=False,
+        )
+
+        response = self.client.get(f"/api/products/{placement_copy.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        mattress_names = [item["name"] for item in response.data["mattresses"]]
+        self.assertEqual(mattress_names.count(self.product_specific_option.name), 1)
+        self.assertEqual(mattress_names.count(self.category_wide_option.name), 1)
+
 
 class GoogleMerchantFeedTests(TestCase):
     def _add_feed_image(self, product, url="https://example.com/product image.jpg", **kwargs):

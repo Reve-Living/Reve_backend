@@ -179,7 +179,16 @@ def _mattress_option_matches_product_scope(item, product) -> bool:
     else:
         matches_taxonomy = not category_ids and not subcategory_ids
 
-    matches_product = not product_ids or product.id in product_ids
+    is_kids_beds_product = (
+        str(getattr(product.category, "slug", "") or "").strip().lower() == "kids-beds"
+        or str(getattr(product.category, "name", "") or "").strip().casefold() == "kids beds"
+    )
+    inherits_kids_beds_assignment = (
+        is_kids_beds_product
+        and product.imported_from_product_id
+        and product.imported_from_product_id in product_ids
+    )
+    matches_product = not product_ids or product.id in product_ids or inherits_kids_beds_assignment
     return matches_taxonomy and matches_product
 
 
@@ -751,7 +760,7 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
         request = self.context.get("request")
         is_admin_request = bool(request and request.user and request.user.is_authenticated and request.user.is_staff)
         cache_key = (
-            f"mattress-options:product-detail:v2:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
+            f"mattress-options:product-detail:v3:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
         )
         base_items = cache.get(cache_key)
         if base_items is None:
