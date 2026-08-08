@@ -1230,11 +1230,12 @@ def google_feed_xml(request):
         .values("url")[:1]
     )
     products = (
-        Product.objects.filter(is_hidden=False)
+        Product.objects.filter(is_hidden=False, category__is_hidden=False)
+        .filter(Q(subcategory__isnull=True) | Q(subcategory__is_hidden=False))
         .select_related("category", "subcategory")
         .prefetch_related("sizes", "colors", "fabrics", "images", "filter_values__filter_option__filter_type")
         .annotate(primary_image_url=Subquery(primary_image_subquery))
-        .only("id", "name", "slug", "description", "short_description", "features", "dimensions", "dimension_paragraph", "dimension_note", "google_feed_brand", "google_feed_sku", "google_feed_mpn", "google_feed_gtin", "google_feed_special_feature", "google_feed_color", "google_feed_material", "google_feed_fabric_type", "google_feed_frame_material", "google_feed_headboard_material", "google_feed_number_of_drawers", "google_feed_depth", "google_feed_length", "google_feed_width", "google_feed_height", "google_feed_seat_height", "google_feed_variants", "price", "in_stock", "category__name", "subcategory__name")
+        .only("id", "name", "slug", "description", "short_description", "features", "dimensions", "dimension_paragraph", "dimension_note", "google_feed_brand", "google_feed_sku", "google_feed_mpn", "google_feed_gtin", "google_feed_special_feature", "google_feed_color", "google_feed_material", "google_feed_fabric_type", "google_feed_frame_material", "google_feed_headboard_material", "google_feed_number_of_drawers", "google_feed_depth", "google_feed_length", "google_feed_width", "google_feed_height", "google_feed_seat_height", "google_feed_variants", "price", "in_stock", "category__name", "category__slug", "category__is_hidden", "subcategory__name", "subcategory__slug", "subcategory__is_hidden")
         .order_by("id")
     )
 
@@ -1246,7 +1247,7 @@ def google_feed_xml(request):
         yield "    <title>Reve Living Product Feed</title>\n"
         yield f"    <link>{escape(channel_link)}</link>\n"
         yield "    <description>Google Merchant Center product feed for Reve Living</description>\n"
-        for product in products.iterator(chunk_size=500):
+        for product in products:
             yield _build_google_feed_items_xml(product, frontend_base_url, backend_base_url)
         yield "  </channel>\n"
         yield "</rss>\n"
