@@ -3184,6 +3184,7 @@ class ProductMattressVisibilityTests(TestCase):
 
 class MattressOptionScopedProductTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.client = APIClient()
         self.category = Category.objects.create(name="Kids Beds", slug="kids-beds-mattress-scope", sort_order=1)
         self.product_one = Product.objects.create(
@@ -3280,6 +3281,33 @@ class MattressOptionScopedProductTests(TestCase):
         mattress_names = [item["name"] for item in response.data["mattresses"]]
         self.assertEqual(mattress_names.count(self.product_specific_option.name), 1)
         self.assertEqual(mattress_names.count(self.category_wide_option.name), 1)
+
+    def test_renamed_kids_beds_import_does_not_inherit_source_specific_mattress(self):
+        subcategory = SubCategory.objects.create(
+            category=self.category,
+            name="Kids Bed Bundles",
+            slug="kids-bed-bundles-mattress-scope",
+            sort_order=2,
+        )
+        renamed_import = Product.objects.create(
+            name="Vision White Bunk Bed with Mattresses",
+            slug="vision-white-bunk-bed-with-mattresses-scope",
+            category=self.category,
+            subcategory=subcategory,
+            imported_from_product=self.product_one,
+            price="699.99",
+            short_description="Kids bed bundle",
+            description="Kids bed bundle description",
+            in_stock=True,
+            is_hidden=False,
+        )
+
+        response = self.client.get(f"/api/products/{renamed_import.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        mattress_names = [item["name"] for item in response.data["mattresses"]]
+        self.assertNotIn(self.product_specific_option.name, mattress_names)
+        self.assertIn(self.category_wide_option.name, mattress_names)
 
 
 class GoogleMerchantFeedTests(TestCase):
