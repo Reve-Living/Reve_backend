@@ -210,7 +210,15 @@ def _mattress_option_matches_product_scope(item, product) -> bool:
                         matching_product_ids.add(related_id)
                         pending_product_ids.append(related_id)
 
-    matches_product = not product_ids or bool(product_ids.intersection(matching_product_ids))
+    matches_explicit_product = bool(product_ids.intersection(matching_product_ids))
+    if is_kids_beds_product and product_ids:
+        # The product checklist is the most specific admin instruction. Keep
+        # that selection effective when a Kids Beds product is later moved
+        # between its parent category and subcategories, even if the mattress's
+        # older taxonomy selection was not updated at the same time.
+        return matches_explicit_product
+
+    matches_product = not product_ids or matches_explicit_product
     return matches_taxonomy and matches_product
 
 
@@ -782,7 +790,7 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
         request = self.context.get("request")
         is_admin_request = bool(request and request.user and request.user.is_authenticated and request.user.is_staff)
         cache_key = (
-            f"mattress-options:product-detail:v6:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
+            f"mattress-options:product-detail:v7:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
         )
         base_items = cache.get(cache_key)
         if base_items is None:

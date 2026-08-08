@@ -3356,6 +3356,48 @@ class MattressOptionScopedProductTests(TestCase):
             1,
         )
 
+    def test_explicit_kids_beds_assignment_survives_subcategory_move(self):
+        old_subcategory = SubCategory.objects.create(
+            category=self.category,
+            name="Legacy Kids Beds",
+            slug="legacy-kids-beds-mattress-scope",
+            sort_order=1,
+        )
+        new_subcategory = SubCategory.objects.create(
+            category=self.category,
+            name="All Kids Beds",
+            slug="moved-all-kids-beds-mattress-scope",
+            sort_order=2,
+        )
+        self.product_specific_option.categories.clear()
+        self.product_specific_option.subcategories.add(old_subcategory)
+        self.product_one.subcategory = new_subcategory
+        self.product_one.save(update_fields=["subcategory"])
+
+        response = self.client.get(f"/api/products/{self.product_one.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        mattress_names = [item["name"] for item in response.data["mattresses"]]
+        self.assertEqual(mattress_names.count(self.product_specific_option.name), 1)
+
+    def test_explicit_kids_beds_assignment_does_not_leak_to_another_product(self):
+        unrelated_subcategory = SubCategory.objects.create(
+            category=self.category,
+            name="All Kids Beds",
+            slug="unrelated-all-kids-beds-mattress-scope",
+            sort_order=1,
+        )
+        self.product_specific_option.categories.clear()
+        self.product_specific_option.subcategories.add(unrelated_subcategory)
+        self.product_two.subcategory = unrelated_subcategory
+        self.product_two.save(update_fields=["subcategory"])
+
+        response = self.client.get(f"/api/products/{self.product_two.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        mattress_names = [item["name"] for item in response.data["mattresses"]]
+        self.assertNotIn(self.product_specific_option.name, mattress_names)
+
     def test_renamed_kids_beds_import_does_not_inherit_source_specific_mattress(self):
         subcategory = SubCategory.objects.create(
             category=self.category,
