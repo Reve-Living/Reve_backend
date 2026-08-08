@@ -3637,6 +3637,21 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
         for p in prices:
             MattressOptionPrice.objects.create(option=option, **p)
 
+    def _next_sort_order_for_button_label(self, button_label):
+        scoped_options = MattressOption.objects.filter(
+            kids_button_label__iexact=str(button_label or "").strip()
+        )
+        last_sort_order = (
+            scoped_options.exclude(sort_order__lte=0)
+            .order_by("-sort_order")
+            .values_list("sort_order", flat=True)
+            .first()
+        )
+        if last_sort_order:
+            return int(last_sort_order) + 1
+        existing_count = scoped_options.count()
+        return existing_count + 1 if existing_count > 0 else 1
+
     def create(self, request, *args, **kwargs):
         data = request.data.copy()
         prices_raw = data.pop("prices", [])
@@ -3647,6 +3662,12 @@ class MattressOptionViewSet(viewsets.ModelViewSet):
         categories = self._clean_categories(categories_raw)
         subcategories = self._clean_subcategories(subcategories_raw)
         products = self._clean_products(products_raw)
+        try:
+            requested_sort_order = int(data.get("sort_order") or 0)
+        except (TypeError, ValueError):
+            requested_sort_order = 0
+        if requested_sort_order <= 0:
+            data["sort_order"] = self._next_sort_order_for_button_label(data.get("kids_button_label", ""))
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
         option = serializer.save()

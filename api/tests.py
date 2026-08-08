@@ -3182,6 +3182,51 @@ class ProductMattressVisibilityTests(TestCase):
         self.assertTrue(saved_override.is_hidden)
 
 
+class MattressOptionAutomaticSortOrderTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        self.admin_user = User.objects.create_user(
+            username="mattress-sort-admin",
+            password="password123",
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=self.admin_user)
+
+    def _create_option(self, name, label, sort_order=0):
+        return self.client.post(
+            "/api/mattress-options/",
+            {
+                "name": name,
+                "kids_button_label": label,
+                "sort_order": sort_order,
+                "prices": [],
+                "categories": [],
+                "subcategories": [],
+                "products": [],
+            },
+            format="json",
+        )
+
+    def test_new_mattresses_without_order_append_inside_their_button_group(self):
+        first = self._create_option("First Top Mattress", "Top Mattress")
+        second = self._create_option("Second Top Mattress", "Top Mattress")
+        first_bottom = self._create_option("First Bottom Mattress", "Bottom Mattress")
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(first_bottom.status_code, 201)
+        self.assertEqual(first.data["sort_order"], 1)
+        self.assertEqual(second.data["sort_order"], 2)
+        self.assertEqual(first_bottom.data["sort_order"], 1)
+
+    def test_explicit_mattress_sort_order_is_preserved(self):
+        response = self._create_option("Pinned Top Mattress", "Top Mattress", sort_order=3)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["sort_order"], 3)
+
+
 class MattressOptionScopedProductTests(TestCase):
     def setUp(self):
         cache.clear()
