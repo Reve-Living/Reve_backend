@@ -3256,8 +3256,8 @@ class MattressOptionScopedProductTests(TestCase):
 
 
 class GoogleMerchantFeedTests(TestCase):
-    def _add_feed_image(self, product, url="https://example.com/product image.jpg"):
-        ProductImage.objects.create(product=product, url=url)
+    def _add_feed_image(self, product, url="https://example.com/product image.jpg", **kwargs):
+        ProductImage.objects.create(product=product, url=url, **kwargs)
 
     def _feed_xml(self):
         response = APIClient().get("/google-feed.xml")
@@ -3625,6 +3625,72 @@ class GoogleMerchantFeedTests(TestCase):
         self.assertIn("<g:attribute_value>Storage</g:attribute_value>", xml)
         self.assertIn("<g:custom_label_0>Storage</g:custom_label_0>", xml)
         self.assertNotIn("<g:id>{}</g:id>".format(product.id), xml)
+
+    def test_feed_uses_colour_bound_images_for_manual_google_merchant_variants(self):
+        category = Category.objects.create(name="Kids Beds", slug="kids-beds-feed-variant-images")
+        product = Product.objects.create(
+            name="Julian Bowen Jupiter Mid Sleeper Cabin Bed",
+            slug="julian-bowen-jupiter-mid-sleeper-cabin-bed-feed",
+            category=category,
+            price="549.00",
+            short_description="Kids cabin bed.",
+            description="Kids cabin bed description.",
+            google_feed_variants=[
+                {"color": "White", "fabric": "", "size": "Single", "sku": "337-v1", "price": "549.00"},
+                {"color": "Grey Oak", "fabric": "", "size": "Single", "sku": "337-v2", "price": "549.00"},
+                {"color": "Anthracite", "fabric": "", "size": "Single", "sku": "337-v3", "price": "549.00"},
+            ],
+        )
+        self._add_feed_image(product, "https://example.com/default.jpg", sort_order=1)
+        self._add_feed_image(product, "https://example.com/white.jpg", color_name="White", sort_order=2)
+        self._add_feed_image(product, "https://example.com/grey-oak.jpg", color_name="Grey Oak", sort_order=3)
+        self._add_feed_image(product, "https://example.com/anthracite.jpg", color_name="Anthracite", sort_order=4)
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:id>337-v1</g:id>", xml)
+        self.assertIn("<g:image_link>https://example.com/white.jpg</g:image_link>", xml)
+        self.assertIn("<g:id>337-v2</g:id>", xml)
+        self.assertIn("<g:image_link>https://example.com/grey-oak.jpg</g:image_link>", xml)
+        self.assertIn("<g:id>337-v3</g:id>", xml)
+        self.assertIn("<g:image_link>https://example.com/anthracite.jpg</g:image_link>", xml)
+
+    def test_kids_beds_feed_uses_kids_age_group(self):
+        category = Category.objects.create(name="Kids Beds", slug="kids-beds-feed-age-group")
+        product = Product.objects.create(
+            name="Ashbrook Solid Wood Bunk Bed",
+            slug="ashbrook-solid-wood-bunk-bed-feed-age-group",
+            category=category,
+            price="389.00",
+            short_description="Kids bunk bed.",
+            description="Kids bunk bed description.",
+        )
+        self._add_feed_image(product)
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:title>Ashbrook Solid Wood Bunk Bed</g:title>", xml)
+        self.assertIn("<g:age_group>kids</g:age_group>", xml)
+        self.assertIn("<g:attribute_name>Age Range</g:attribute_name>", xml)
+        self.assertIn("<g:attribute_value>Newborn to 14 years old</g:attribute_value>", xml)
+        self.assertNotIn("<g:age_group>adult</g:age_group>", xml)
+
+    def test_feed_skips_items_without_positive_price(self):
+        category = Category.objects.create(name="Beds", slug="beds-feed-zero-price")
+        product = Product.objects.create(
+            name="Zero Price Feed Bed",
+            slug="zero-price-feed-bed",
+            category=category,
+            price="0.00",
+            short_description="No positive feed price.",
+            description="No positive feed price description.",
+        )
+        self._add_feed_image(product)
+
+        xml = self._feed_xml()
+
+        self.assertNotIn("Zero Price Feed Bed", xml)
+        self.assertNotIn("<g:price>0.00 GBP</g:price>", xml)
 
     def test_feed_only_adds_frame_material_when_explicitly_stated(self):
         category = Category.objects.create(name="Sofas", slug="sofas-feed-frame-material")

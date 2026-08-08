@@ -605,6 +605,79 @@ def _get_google_feed_variant_price(variant: dict | None) -> Decimal | None:
     return price
 
 
+def _normalise_google_feed_match_value(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _get_google_feed_variant_image_url(product, manual_variant: dict | None, backend_base_url: str) -> str:
+    images = getattr(product, "_prefetched_images", []) or []
+    variant_values = [
+        _get_google_feed_variant_value(manual_variant, "color"),
+        _get_google_feed_variant_value(manual_variant, "fabric"),
+        _get_google_feed_variant_value(manual_variant, "size"),
+    ]
+    normalised_variant_values = {
+        _normalise_google_feed_match_value(value)
+        for value in variant_values
+        if _normalise_google_feed_match_value(value)
+    }
+
+    if normalised_variant_values:
+        for image in images:
+            image_values = [
+                getattr(image, "color_name", ""),
+                getattr(image, "style_name", ""),
+            ]
+            normalised_image_values = {
+                _normalise_google_feed_match_value(value)
+                for value in image_values
+                if _normalise_google_feed_match_value(value)
+            }
+            if normalised_variant_values.intersection(normalised_image_values):
+                image_url = _to_google_feed_image_url(getattr(image, "url", ""), backend_base_url)
+                if image_url:
+                    return image_url
+
+    return _to_google_feed_image_url(getattr(product, "primary_image_url", ""), backend_base_url)
+
+
+def _get_google_feed_age_group(product) -> str:
+    category_name = getattr(getattr(product, "category", None), "name", "")
+    category_slug = getattr(getattr(product, "category", None), "slug", "")
+    subcategory_name = getattr(getattr(product, "subcategory", None), "name", "")
+    subcategory_slug = getattr(getattr(product, "subcategory", None), "slug", "")
+    scope_text = _normalise_google_feed_detail_name(
+        " ".join([category_name, category_slug, subcategory_name, subcategory_slug])
+    )
+    kids_terms = (
+        "kids",
+        "children",
+        "child",
+        "baby",
+        "toddler",
+        "cot",
+        "bunk",
+        "cabin",
+        "sleeper",
+        "novelty",
+        "day bed",
+        "day-bed",
+        "trundle",
+    )
+    if any(term in scope_text for term in kids_terms):
+        return "kids"
+    return "adult"
+
+
+def _get_google_feed_age_range_detail(product) -> str:
+    product_text = _get_google_feed_product_text(product)
+    if "bed" not in product_text or "sofa bed" in product_text:
+        return ""
+    if _get_google_feed_age_group(product) == "kids":
+        return "Newborn to 14 years old"
+    return "10+ years old"
+
+
 def _get_google_feed_extra_attributes(product, materials) -> dict:
     product_text = _get_google_feed_product_text(product)
     is_bed = "bed" in product_text and "sofa bed" not in product_text
@@ -885,7 +958,7 @@ def _build_google_feed_item_xml(
     If size is provided, generates a variant entry with item_group_id.
     """
     product_link = urljoin(frontend_base_url, f"product/{product.slug}/")
-    product_image = _to_google_feed_image_url(getattr(product, "primary_image_url", ""), backend_base_url)
+    product_image = _get_google_feed_variant_image_url(product, manual_variant, backend_base_url)
     if not product_image:
         return ""
     description = (product.short_description or product.description or product.name or "").strip()
@@ -897,6 +970,8 @@ def _build_google_feed_item_xml(
     price = Decimal(price_override) if price_override is not None else (variant_price if variant_price is not None else Decimal(product.price))
     if price_override is None and size and hasattr(size, "price_delta") and size.price_delta:
         price = Decimal(size.price_delta)
+    if price <= 0:
+        return ""
     price_text = f"{price.quantize(TWOPLACES)} GBP"
     
     # ID generation
@@ -1032,6 +1107,14 @@ def _build_google_feed_item_xml(
     for detail in product_details:
         _append_google_feed_product_detail_xml(lines, detail)
 
+    age_range_detail = _get_google_feed_age_range_detail(product)
+    if age_range_detail:
+        _append_google_feed_product_detail_xml(lines, {
+            "section_name": "General",
+            "attribute_name": "Age Range",
+            "attribute_value": age_range_detail,
+        })
+
     if feed_sku:
         _append_google_feed_product_detail_xml(lines, {
             "section_name": "General",
@@ -1063,7 +1146,7 @@ def _build_google_feed_item_xml(
         lines.append(f"      <g:color>{escape(color_text)}</g:color>")
     
     # Add standard attributes for furniture
-    lines.append("      <g:age_group>adult</g:age_group>")
+    lines.append(f"      <g:age_group>{_get_google_feed_age_group(product)}</g:age_group>")
     lines.append("      <g:gender>unisex</g:gender>")
     
     # Add custom label for products with storage
@@ -1084,11 +1167,13 @@ def _build_google_feed_items_xml(product, frontend_base_url: str, backend_base_u
     sizes = list(product.sizes.all()) if hasattr(product, "sizes") else []
     colors = list(product.colors.all()) if hasattr(product, "colors") else []
     fabrics = list(product.fabrics.all()) if hasattr(product, "fabrics") else []
+    images = list(product.images.all()) if hasattr(product, "images") else []
     filter_values = list(product.filter_values.all()) if hasattr(product, "filter_values") else []
     
     # Store prefetched data on product object for use in _build_google_feed_item_xml
     product._prefetched_colors = colors
     product._prefetched_fabrics = fabrics
+    product._prefetched_images = images
     product._prefetched_filter_values = filter_values
     
     items_xml = ""
@@ -1147,7 +1232,7 @@ def google_feed_xml(request):
     products = (
         Product.objects.filter(is_hidden=False)
         .select_related("category", "subcategory")
-        .prefetch_related("sizes", "colors", "fabrics", "filter_values__filter_option__filter_type")
+        .prefetch_related("sizes", "colors", "fabrics", "images", "filter_values__filter_option__filter_type")
         .annotate(primary_image_url=Subquery(primary_image_subquery))
         .only("id", "name", "slug", "description", "short_description", "features", "dimensions", "dimension_paragraph", "dimension_note", "google_feed_brand", "google_feed_sku", "google_feed_mpn", "google_feed_gtin", "google_feed_special_feature", "google_feed_color", "google_feed_material", "google_feed_fabric_type", "google_feed_frame_material", "google_feed_headboard_material", "google_feed_number_of_drawers", "google_feed_depth", "google_feed_length", "google_feed_width", "google_feed_height", "google_feed_seat_height", "google_feed_variants", "price", "in_stock", "category__name", "subcategory__name")
         .order_by("id")
