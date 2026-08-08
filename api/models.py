@@ -420,7 +420,6 @@ class MattressOption(models.Model):
     name = models.CharField(max_length=255)
     display_name = models.CharField(max_length=255, blank=True, default="")
     kids_button_label = models.CharField(max_length=120, blank=True, default="")
-    kids_button_sort_order = models.IntegerField(default=0)
     description = models.TextField(blank=True)
     features = models.TextField(blank=True, default="")
     image_url = models.URLField(max_length=1000, blank=True)
