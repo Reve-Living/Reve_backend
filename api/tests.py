@@ -3296,6 +3296,34 @@ class GoogleMerchantFeedTests(TestCase):
 
         self.assertIn("<g:image_link>https://example.com/media/product%20image%20%26%20angle.jpg</g:image_link>", xml)
 
+    def test_feed_excludes_imported_product_copies(self):
+        category = Category.objects.create(name="Kids Beds", slug="kids-beds-feed-imported-copy")
+        source_product = Product.objects.create(
+            name="Ashbrook Solid Wood Bunk Bed",
+            slug="ashbrook-solid-wood-bunk-bed-source-feed",
+            category=category,
+            price="389.00",
+            short_description="Source kids bunk bed.",
+            description="Source kids bunk bed description.",
+        )
+        imported_copy = Product.objects.create(
+            name="Ashbrook Solid Wood Bunk Bed Copy",
+            slug="ashbrook-solid-wood-bunk-bed-copy-feed",
+            category=category,
+            imported_from_product=source_product,
+            price="389.00",
+            short_description="Imported kids bunk bed copy.",
+            description="Imported kids bunk bed copy description.",
+        )
+        self._add_feed_image(source_product, "https://example.com/source.jpg")
+        self._add_feed_image(imported_copy, "https://example.com/copy.jpg")
+
+        xml = self._feed_xml()
+
+        self.assertIn("<g:title>Ashbrook Solid Wood Bunk Bed</g:title>", xml)
+        self.assertNotIn("Ashbrook Solid Wood Bunk Bed Copy", xml)
+        self.assertNotIn("https://example.com/copy.jpg", xml)
+
     def test_bed_subcategory_feed_uses_lowest_product_price_once(self):
         category = Category.objects.create(name="Beds", slug="beds-feed")
         subcategory = SubCategory.objects.create(name="Divan Beds", slug="divan-beds-feed", category=category)

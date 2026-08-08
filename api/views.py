@@ -1230,7 +1230,7 @@ def google_feed_xml(request):
         .values("url")[:1]
     )
     products = (
-        Product.objects.filter(is_hidden=False, category__is_hidden=False)
+        Product.objects.filter(is_hidden=False, imported_from_product__isnull=True, category__is_hidden=False)
         .filter(Q(subcategory__isnull=True) | Q(subcategory__is_hidden=False))
         .select_related("category", "subcategory")
         .prefetch_related("sizes", "colors", "fabrics", "images", "filter_values__filter_option__filter_type")
