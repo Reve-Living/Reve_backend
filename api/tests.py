@@ -3315,6 +3315,47 @@ class MattressOptionScopedProductTests(TestCase):
         self.assertEqual(mattress_names.count(self.product_specific_option.name), 1)
         self.assertEqual(mattress_names.count(self.category_wide_option.name), 1)
 
+    def test_kids_beds_source_and_sibling_share_descendant_assignment_once(self):
+        subcategory = SubCategory.objects.create(
+            category=self.category,
+            name="All Kids Beds",
+            slug="all-kids-beds-sibling-mattress-scope",
+            sort_order=1,
+        )
+        first_copy = Product.objects.create(
+            name=self.product_one.name,
+            slug="vision-white-bunk-bed-assigned-placement-copy",
+            category=self.category,
+            subcategory=subcategory,
+            imported_from_product=self.product_one,
+            price=self.product_one.price,
+            description=self.product_one.description,
+        )
+        sibling_copy = Product.objects.create(
+            name=self.product_one.name,
+            slug="vision-white-bunk-bed-sibling-placement-copy",
+            category=self.category,
+            subcategory=subcategory,
+            imported_from_product=self.product_one,
+            price=self.product_one.price,
+            description=self.product_one.description,
+        )
+        self.product_specific_option.products.set([first_copy])
+
+        source_response = self.client.get(f"/api/products/{self.product_one.id}/")
+        sibling_response = self.client.get(f"/api/products/{sibling_copy.id}/")
+
+        self.assertEqual(source_response.status_code, 200)
+        self.assertEqual(sibling_response.status_code, 200)
+        self.assertEqual(
+            [item["name"] for item in source_response.data["mattresses"]].count(self.product_specific_option.name),
+            1,
+        )
+        self.assertEqual(
+            [item["name"] for item in sibling_response.data["mattresses"]].count(self.product_specific_option.name),
+            1,
+        )
+
     def test_renamed_kids_beds_import_does_not_inherit_source_specific_mattress(self):
         subcategory = SubCategory.objects.create(
             category=self.category,

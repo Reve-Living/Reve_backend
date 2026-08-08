@@ -185,19 +185,30 @@ def _mattress_option_matches_product_scope(item, product) -> bool:
     )
     matching_product_ids = {product.id}
     if is_kids_beds_product:
-        current_product = product
-        visited_product_ids = {product.id}
-        while current_product.imported_from_product_id:
-            source_product = getattr(current_product, "imported_from_product", None)
-            if not source_product or source_product.id in visited_product_ids:
-                break
-            current_name = " ".join(str(current_product.name or "").casefold().split())
-            source_name = " ".join(str(source_product.name or "").casefold().split())
-            if not current_name or current_name != source_name:
-                break
-            matching_product_ids.add(source_product.id)
-            visited_product_ids.add(source_product.id)
-            current_product = source_product
+        normalized_name = " ".join(str(product.name or "").casefold().split())
+        if normalized_name:
+            # Imports used only as category/subcategory placements represent the
+            # same storefront product. A mattress may have been assigned to any
+            # member of that family in admin, so follow matching-name import
+            # edges in both directions. Renamed imports (for example a bundle)
+            # deliberately form a separate family.
+            pending_product_ids = [product.id]
+            while pending_product_ids:
+                current_id = pending_product_ids.pop()
+                related_products = Product.objects.filter(
+                    Q(id=current_id) | Q(imported_from_product_id=current_id)
+                ).values("id", "name", "imported_from_product_id")
+                current_row = next((row for row in related_products if row["id"] == current_id), None)
+                if current_row and current_row["imported_from_product_id"]:
+                    parent = Product.objects.filter(id=current_row["imported_from_product_id"]).values("id", "name").first()
+                    if parent and " ".join(str(parent["name"] or "").casefold().split()) == normalized_name:
+                        related_products = list(related_products) + [parent]
+                for related in related_products:
+                    related_id = related["id"]
+                    related_name = " ".join(str(related["name"] or "").casefold().split())
+                    if related_id not in matching_product_ids and related_name == normalized_name:
+                        matching_product_ids.add(related_id)
+                        pending_product_ids.append(related_id)
 
     matches_product = not product_ids or bool(product_ids.intersection(matching_product_ids))
     return matches_taxonomy and matches_product
@@ -771,7 +782,7 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
         request = self.context.get("request")
         is_admin_request = bool(request and request.user and request.user.is_authenticated and request.user.is_staff)
         cache_key = (
-            f"mattress-options:product-detail:v5:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
+            f"mattress-options:product-detail:v6:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
         )
         base_items = cache.get(cache_key)
         if base_items is None:
