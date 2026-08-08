@@ -183,8 +183,13 @@ def _mattress_option_matches_product_scope(item, product) -> bool:
         str(getattr(product.category, "slug", "") or "").strip().lower() == "kids-beds"
         or str(getattr(product.category, "name", "") or "").strip().casefold() == "kids beds"
     )
-    matching_product_ids = {product.id}
-    if is_kids_beds_product:
+    cached_matching_product_ids = getattr(product, "_kids_beds_mattress_matching_product_ids", None)
+    matching_product_ids = (
+        set(cached_matching_product_ids)
+        if is_kids_beds_product and cached_matching_product_ids is not None
+        else {product.id}
+    )
+    if is_kids_beds_product and cached_matching_product_ids is None:
         normalized_name = " ".join(str(product.name or "").casefold().split())
         product_subcategory = getattr(product, "subcategory", None)
         is_general_kids_placement = not product_subcategory or (
@@ -224,6 +229,7 @@ def _mattress_option_matches_product_scope(item, product) -> bool:
                     if related_id not in matching_product_ids and same_logical_product:
                         matching_product_ids.add(related_id)
                         pending_product_ids.append(related_id)
+        product._kids_beds_mattress_matching_product_ids = frozenset(matching_product_ids)
 
     matches_explicit_product = bool(product_ids.intersection(matching_product_ids))
     if is_kids_beds_product and product_ids:
