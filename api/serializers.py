@@ -183,19 +183,23 @@ def _mattress_option_matches_product_scope(item, product) -> bool:
         str(getattr(product.category, "slug", "") or "").strip().lower() == "kids-beds"
         or str(getattr(product.category, "name", "") or "").strip().casefold() == "kids beds"
     )
-    source_product = getattr(product, "imported_from_product", None)
-    product_name = " ".join(str(product.name or "").casefold().split())
-    source_product_name = " ".join(str(getattr(source_product, "name", "") or "").casefold().split())
-    is_unchanged_placement_copy = bool(
-        source_product and product_name and product_name == source_product_name
-    )
-    inherits_kids_beds_assignment = (
-        is_kids_beds_product
-        and is_unchanged_placement_copy
-        and product.imported_from_product_id
-        and product.imported_from_product_id in product_ids
-    )
-    matches_product = not product_ids or product.id in product_ids or inherits_kids_beds_assignment
+    matching_product_ids = {product.id}
+    if is_kids_beds_product:
+        current_product = product
+        visited_product_ids = {product.id}
+        while current_product.imported_from_product_id:
+            source_product = getattr(current_product, "imported_from_product", None)
+            if not source_product or source_product.id in visited_product_ids:
+                break
+            current_name = " ".join(str(current_product.name or "").casefold().split())
+            source_name = " ".join(str(source_product.name or "").casefold().split())
+            if not current_name or current_name != source_name:
+                break
+            matching_product_ids.add(source_product.id)
+            visited_product_ids.add(source_product.id)
+            current_product = source_product
+
+    matches_product = not product_ids or bool(product_ids.intersection(matching_product_ids))
     return matches_taxonomy and matches_product
 
 
@@ -767,7 +771,7 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
         request = self.context.get("request")
         is_admin_request = bool(request and request.user and request.user.is_authenticated and request.user.is_staff)
         cache_key = (
-            f"mattress-options:product-detail:v4:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
+            f"mattress-options:product-detail:v5:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
         )
         base_items = cache.get(cache_key)
         if base_items is None:

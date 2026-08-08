@@ -3282,6 +3282,39 @@ class MattressOptionScopedProductTests(TestCase):
         self.assertEqual(mattress_names.count(self.product_specific_option.name), 1)
         self.assertEqual(mattress_names.count(self.category_wide_option.name), 1)
 
+    def test_nested_kids_beds_placement_copy_inherits_ancestor_mattresses_once(self):
+        subcategory = SubCategory.objects.create(
+            category=self.category,
+            name="All Kids Beds",
+            slug="all-kids-beds-nested-mattress-scope",
+            sort_order=1,
+        )
+        first_copy = Product.objects.create(
+            name=self.product_one.name,
+            slug="vision-white-bunk-bed-first-placement-copy",
+            category=self.category,
+            subcategory=subcategory,
+            imported_from_product=self.product_one,
+            price=self.product_one.price,
+            description=self.product_one.description,
+        )
+        nested_copy = Product.objects.create(
+            name=self.product_one.name,
+            slug="vision-white-bunk-bed-nested-placement-copy",
+            category=self.category,
+            subcategory=subcategory,
+            imported_from_product=first_copy,
+            price=self.product_one.price,
+            description=self.product_one.description,
+        )
+
+        response = self.client.get(f"/api/products/{nested_copy.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        mattress_names = [item["name"] for item in response.data["mattresses"]]
+        self.assertEqual(mattress_names.count(self.product_specific_option.name), 1)
+        self.assertEqual(mattress_names.count(self.category_wide_option.name), 1)
+
     def test_renamed_kids_beds_import_does_not_inherit_source_specific_mattress(self):
         subcategory = SubCategory.objects.create(
             category=self.category,
