@@ -186,27 +186,42 @@ def _mattress_option_matches_product_scope(item, product) -> bool:
     matching_product_ids = {product.id}
     if is_kids_beds_product:
         normalized_name = " ".join(str(product.name or "").casefold().split())
+        product_subcategory = getattr(product, "subcategory", None)
+        is_general_kids_placement = not product_subcategory or (
+            str(getattr(product_subcategory, "slug", "") or "").strip().lower() == "all-kids-beds"
+            or str(getattr(product_subcategory, "name", "") or "").strip().casefold() == "all kids beds"
+        )
         if normalized_name:
             # Imports used only as category/subcategory placements represent the
             # same storefront product. A mattress may have been assigned to any
-            # member of that family in admin, so follow matching-name import
-            # edges in both directions. Renamed imports (for example a bundle)
-            # deliberately form a separate family.
+            # member of that family in admin, so follow import edges in both
+            # directions. Parent <-> All Kids Beds placements stay equivalent
+            # even if an older copied name drifted after an edit. Other Kids Beds
+            # subcategories (for example mattress bundles) remain independent
+            # and only follow matching-name copies.
             pending_product_ids = [product.id]
             while pending_product_ids:
                 current_id = pending_product_ids.pop()
                 related_products = Product.objects.filter(
                     Q(id=current_id) | Q(imported_from_product_id=current_id)
-                ).values("id", "name", "imported_from_product_id")
-                current_row = next((row for row in related_products if row["id"] == current_id), None)
-                if current_row and current_row["imported_from_product_id"]:
-                    parent = Product.objects.filter(id=current_row["imported_from_product_id"]).values("id", "name").first()
-                    if parent and " ".join(str(parent["name"] or "").casefold().split()) == normalized_name:
+                ).select_related("subcategory")
+                current_row = next((row for row in related_products if row.id == current_id), None)
+                if current_row and current_row.imported_from_product_id:
+                    parent = Product.objects.select_related("subcategory").filter(id=current_row.imported_from_product_id).first()
+                    if parent:
                         related_products = list(related_products) + [parent]
                 for related in related_products:
-                    related_id = related["id"]
-                    related_name = " ".join(str(related["name"] or "").casefold().split())
-                    if related_id not in matching_product_ids and related_name == normalized_name:
+                    related_id = related.id
+                    related_name = " ".join(str(related.name or "").casefold().split())
+                    related_subcategory = getattr(related, "subcategory", None)
+                    related_is_general_placement = not related_subcategory or (
+                        str(getattr(related_subcategory, "slug", "") or "").strip().lower() == "all-kids-beds"
+                        or str(getattr(related_subcategory, "name", "") or "").strip().casefold() == "all kids beds"
+                    )
+                    same_logical_product = (
+                        is_general_kids_placement and related_is_general_placement
+                    ) or related_name == normalized_name
+                    if related_id not in matching_product_ids and same_logical_product:
                         matching_product_ids.add(related_id)
                         pending_product_ids.append(related_id)
 
@@ -790,7 +805,7 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
         request = self.context.get("request")
         is_admin_request = bool(request and request.user and request.user.is_authenticated and request.user.is_staff)
         cache_key = (
-            f"mattress-options:product-detail:v7:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
+            f"mattress-options:product-detail:v8:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
         )
         base_items = cache.get(cache_key)
         if base_items is None:

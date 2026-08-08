@@ -3315,6 +3315,29 @@ class MattressOptionScopedProductTests(TestCase):
         self.assertEqual(mattress_names.count(self.product_specific_option.name), 1)
         self.assertEqual(mattress_names.count(self.category_wide_option.name), 1)
 
+    def test_all_kids_beds_placement_keeps_assignment_after_copied_name_drifts(self):
+        subcategory = SubCategory.objects.create(
+            category=self.category,
+            name="All Kids Beds",
+            slug="all-kids-beds",
+            sort_order=1,
+        )
+        placement_copy = Product.objects.create(
+            name="Vision White Bunk Bed - Updated Name",
+            slug="vision-white-bunk-bed-renamed-placement-copy",
+            category=self.category,
+            subcategory=subcategory,
+            imported_from_product=self.product_one,
+            price=self.product_one.price,
+            description=self.product_one.description,
+        )
+
+        response = self.client.get(f"/api/products/{placement_copy.id}/")
+
+        self.assertEqual(response.status_code, 200)
+        mattress_names = [item["name"] for item in response.data["mattresses"]]
+        self.assertEqual(mattress_names.count(self.product_specific_option.name), 1)
+
     def test_kids_beds_source_and_sibling_share_descendant_assignment_once(self):
         subcategory = SubCategory.objects.create(
             category=self.category,
