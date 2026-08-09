@@ -424,7 +424,7 @@ class CategorySerializer(serializers.ModelSerializer):
 class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductImage
-        fields = ("id", "url", "color_name", "style_name", "alt_text", "flip_horizontal", "sort_order")
+        fields = ("id", "url", "color_name", "style_name", "size_name", "alt_text", "flip_horizontal", "sort_order")
 
 
 class ProductVideoSerializer(serializers.ModelSerializer):

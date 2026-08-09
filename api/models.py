@@ -330,6 +330,7 @@ class ProductImage(models.Model):
     url = models.URLField(max_length=1000)
     color_name = models.CharField(max_length=120, blank=True, default="")
     style_name = models.CharField(max_length=120, blank=True, default="")
+    size_name = models.CharField(max_length=120, blank=True, default="")
     alt_text = models.CharField(max_length=255, blank=True, default="")
     flip_horizontal = models.BooleanField(default=False)
     sort_order = models.PositiveIntegerField(default=0)
