@@ -4819,6 +4819,18 @@ class FilterTypeViewSet(viewsets.ModelViewSet):
     serializer_class = FilterTypeSerializer
     permission_classes = [IsAdminOrReadOnly]
 
+    def perform_create(self, serializer):
+        serializer.save()
+        cache.clear()
+
+    def perform_update(self, serializer):
+        serializer.save()
+        cache.clear()
+
+    def perform_destroy(self, instance):
+        instance.delete()
+        cache.clear()
+
 
 class FilterOptionViewSet(viewsets.ModelViewSet):
     """CRUD for individual filter options (e.g., King, Double)."""
