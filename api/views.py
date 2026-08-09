@@ -3157,8 +3157,8 @@ class ProductViewSet(viewsets.ModelViewSet):
         )
 
     def _handle_related_data(self, product, images, videos, colors, sizes, styles, fabrics, mattresses):
-        for img in images:
-            ProductImage.objects.create(
+        ProductImage.objects.bulk_create(
+            [ProductImage(
                 product=product,
                 url=img.get("url"),
                 color_name=img.get("color_name", ""),
@@ -3167,63 +3167,77 @@ class ProductViewSet(viewsets.ModelViewSet):
                 alt_text=img.get("alt_text", ""),
                 flip_horizontal=bool(img.get("flip_horizontal", False)),
                 sort_order=img.get("sort_order", 0),
-            )
-        for vid in videos:
-            ProductVideo.objects.create(product=product, url=vid.get("url"))
-        for col in colors:
-            ProductColor.objects.create(
+            ) for img in images],
+            batch_size=500,
+        )
+        ProductVideo.objects.bulk_create(
+            [ProductVideo(product=product, url=vid.get("url")) for vid in videos],
+            batch_size=500,
+        )
+        ProductColor.objects.bulk_create(
+            [ProductColor(
                 product=product,
                 name=col.get("name", ""),
                 hex_code=col.get("hex_code", "#000000"),
                 image_url=col.get("image_url", ""),
                 is_available=col.get("is_available", True),
                 stock_status=col.get("stock_status", ProductColor.STOCK_STATUS_AVAILABLE),
-            )
-        size_objs = []
-        for size in sizes:
-            size_obj = ProductSize.objects.create(
+            ) for col in colors],
+            batch_size=500,
+        )
+        size_objs = ProductSize.objects.bulk_create(
+            [ProductSize(
                 product=product,
                 name=size.get("name", ""),
                 description=size.get("description", ""),
                 price_delta=size.get("price_delta", 0),
                 stock_status=size.get("stock_status", ProductSize.STOCK_STATUS_AVAILABLE),
-            )
-            size_objs.append(size_obj)
+            ) for size in sizes],
+            batch_size=500,
+        )
         size_lookup = {s.name.strip().lower(): s for s in size_objs}
         size_lookup.update({str(s.id): s for s in size_objs})
+        style_objs = []
         for style in styles:
             size_ref = style.get("size")
             size_obj = None
             if size_ref:
                 key = str(size_ref).strip().lower()
                 size_obj = size_lookup.get(key)
-            ProductStyle.objects.create(
+            style_objs.append(ProductStyle(
                 product=product,
                 size=size_obj,
                 is_shared=bool(style.get("is_shared", False)),
                 name=style.get("name"),
                 icon_url=style.get("icon_url", ""),
                 options=style.get("options", []),
-            )
-        for fabric in fabrics:
-            ProductFabric.objects.create(
+            ))
+        ProductStyle.objects.bulk_create(style_objs, batch_size=500)
+        ProductFabric.objects.bulk_create(
+            [ProductFabric(
                 product=product,
                 name=fabric.get("name", ""),
                 image_url=fabric.get("image_url", ""),
                 is_shared=bool(fabric.get("is_shared", False)),
                 colors=fabric.get("colors", []),
-            )
-        for mattress in mattresses:
-            source_product = None
-            source_id = mattress.get("source_product")
-            if source_id:
-                try:
-                    source_product = Product.objects.get(id=source_id)
-                except Product.DoesNotExist:
-                    source_product = None
-            ProductMattress.objects.create(
+            ) for fabric in fabrics],
+            batch_size=500,
+        )
+        source_ids = {
+            int(mattress.get("source_product"))
+            for mattress in mattresses
+            if str(mattress.get("source_product") or "").isdigit()
+        }
+        valid_source_ids = set(Product.objects.filter(id__in=source_ids).values_list("id", flat=True))
+        ProductMattress.objects.bulk_create(
+            [ProductMattress(
                 product=product,
-                source_product=source_product,
+                source_product_id=(
+                    int(mattress.get("source_product"))
+                    if str(mattress.get("source_product") or "").isdigit()
+                    and int(mattress.get("source_product")) in valid_source_ids
+                    else None
+                ),
                 name=mattress.get("name", ""),
                 description=mattress.get("description", ""),
                 image_url=mattress.get("image_url", ""),
@@ -3233,7 +3247,9 @@ class ProductViewSet(viewsets.ModelViewSet):
                 price_bottom=mattress.get("price_bottom", None),
                 price_both=mattress.get("price_both", None),
                 is_hidden=bool(mattress.get("is_hidden", False)),
-            )
+            ) for mattress in mattresses],
+            batch_size=500,
+        )
 
     def _validate_related_data(self, images, videos, colors, sizes, styles, fabrics, mattresses):
         def _coerce_bool(value, default=True):
@@ -3538,18 +3554,20 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def _handle_filter_values(self, product, filter_values):
         product.filter_values.all().delete()
-        cleaned = []
+        option_ids = set()
         for fv in filter_values or []:
             opt_id = fv.get("filter_option") if isinstance(fv, dict) else fv
             if not opt_id:
                 continue
             try:
-                option = FilterOption.objects.get(id=opt_id)
-            except FilterOption.DoesNotExist:
+                option_ids.add(int(opt_id))
+            except (TypeError, ValueError):
                 continue
-            cleaned.append(option)
-        for option in cleaned:
-            ProductFilterValue.objects.create(product=product, filter_option=option)
+        valid_option_ids = FilterOption.objects.filter(id__in=option_ids).values_list("id", flat=True)
+        ProductFilterValue.objects.bulk_create(
+            [ProductFilterValue(product=product, filter_option_id=option_id) for option_id in valid_option_ids],
+            batch_size=500,
+        )
 
     def _handle_dimension_template(self, product, dimension_template_obj):
         # Remove existing link if cleared
