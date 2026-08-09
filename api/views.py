@@ -14,7 +14,7 @@ from django.core.files.base import ContentFile
 from django.contrib.auth.models import User
 from django.utils.text import slugify
 from django.db import connection, transaction
-from django.db.models import Avg, BooleanField, Count, DecimalField, Exists, FloatField, IntegerField, OuterRef, Prefetch, Q, Subquery, Case, When, Value
+from django.db.models import Avg, BooleanField, Count, DecimalField, Exists, F, FloatField, IntegerField, OuterRef, Prefetch, Q, Subquery, Case, When, Value
 from django.core.cache import cache
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
@@ -2306,6 +2306,17 @@ class ProductViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(category_filter)
         if subcategory:
             queryset = queryset.filter(subcategory__slug=subcategory)
+            if not is_admin_request and subcategory.strip().lower() == "kids-bed-mattress-bundles":
+                # Legacy imports sometimes created an unchanged copy inside the
+                # exact same public scope. Hide only that redundant placement
+                # row from storefront listings before pagination so duplicates
+                # cannot split across separate pages. No product is deleted.
+                queryset = queryset.exclude(
+                    imported_from_product__isnull=False,
+                    imported_from_product__category_id=F("category_id"),
+                    imported_from_product__subcategory_id=F("subcategory_id"),
+                    imported_from_product__name=F("name"),
+                )
         if bestseller:
             queryset = queryset.filter(is_bestseller=True)
         if is_new:
@@ -2394,7 +2405,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         return queryset
 
     def _product_list_cache_key(self, params):
-        return f"product-list:v8:{urlencode(sorted(params.items()), doseq=True)}"
+        return f"product-list:v9:{urlencode(sorted(params.items()), doseq=True)}"
 
     def _summary_queryset_for_cache(self):
         primary_image_subquery = _primary_image_subquery()
@@ -2447,6 +2458,13 @@ class ProductViewSet(viewsets.ModelViewSet):
             )
         elif subcategory_slug:
             queryset = queryset.filter(subcategory__slug=subcategory_slug).order_by("sort_order", "-created_at")
+            if subcategory_slug.strip().lower() == "kids-bed-mattress-bundles":
+                queryset = queryset.exclude(
+                    imported_from_product__isnull=False,
+                    imported_from_product__category_id=F("category_id"),
+                    imported_from_product__subcategory_id=F("subcategory_id"),
+                    imported_from_product__name=F("name"),
+                )
         else:
             return
 
@@ -2630,7 +2648,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             return log_query_count(super().list(request, *args, **kwargs))
 
         query_string = urlencode(sorted(request.query_params.lists()), doseq=True)
-        cache_key = f"product-list:v8:{query_string}"
+        cache_key = f"product-list:v9:{query_string}"
         cached_data = cache.get(cache_key)
         if cached_data is not None:
             return log_query_count(Response(cached_data))

@@ -1699,6 +1699,67 @@ class ProductDuplicateTests(TestCase):
         )
 
 
+class KidsBedsBundlePublicDeduplicationTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        self.category = Category.objects.create(name="Kids Beds", slug="kids-beds", sort_order=1)
+        self.subcategory = SubCategory.objects.create(
+            category=self.category,
+            name="Kids Bed & Mattress Bundles",
+            slug="kids-bed-mattress-bundles",
+            sort_order=2,
+        )
+
+    def _product(self, name, slug, source=None, price="499.00"):
+        return Product.objects.create(
+            name=name,
+            slug=slug,
+            category=self.category,
+            subcategory=self.subcategory,
+            imported_from_product=source,
+            price=price,
+            description="Kids bundle",
+            is_hidden=False,
+        )
+
+    def test_public_bundle_listing_hides_same_scope_unchanged_placement_copy(self):
+        source = self._product("Cyrus Gaming Bed", "cyrus-gaming-bed")
+        redundant_copy = self._product(
+            source.name,
+            "cyrus-gaming-bed-kids-bundle-copy",
+            source=source,
+            price="449.00",
+        )
+
+        response = self.client.get("/api/products/?subcategory=kids-bed-mattress-bundles&summary=1")
+
+        self.assertEqual(response.status_code, 200)
+        result_ids = [item["id"] for item in response.data]
+        self.assertIn(source.id, result_ids)
+        self.assertNotIn(redundant_copy.id, result_ids)
+
+    def test_public_bundle_listing_keeps_renamed_import_and_manual_duplicate(self):
+        source = self._product("Cyrus Gaming Bed", "cyrus-gaming-bed-independent")
+        renamed_import = self._product(
+            "Cyrus Gaming Bed with Two Mattresses",
+            "cyrus-gaming-bed-two-mattresses",
+            source=source,
+        )
+        manual_duplicate = self._product(
+            "Cyrus Gaming Bed (Copy)",
+            "cyrus-gaming-bed-manual-copy",
+        )
+
+        response = self.client.get("/api/products/?subcategory=kids-bed-mattress-bundles&summary=1")
+
+        self.assertEqual(response.status_code, 200)
+        result_ids = [item["id"] for item in response.data]
+        self.assertIn(source.id, result_ids)
+        self.assertIn(renamed_import.id, result_ids)
+        self.assertIn(manual_duplicate.id, result_ids)
+
+
 class ProductVariantAvailabilityTests(TestCase):
     def test_admin_can_save_availability_for_colors_and_fabric_colors(self):
         client = APIClient()
