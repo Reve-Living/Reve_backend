@@ -4826,6 +4826,18 @@ class FilterOptionViewSet(viewsets.ModelViewSet):
     serializer_class = FilterOptionSerializer
     permission_classes = [IsAdminOrReadOnly]
 
+    def perform_create(self, serializer):
+        serializer.save()
+        cache.clear()
+
+    def perform_update(self, serializer):
+        serializer.save()
+        cache.clear()
+
+    def perform_destroy(self, instance):
+        instance.delete()
+        cache.clear()
+
     @action(detail=True, methods=["get", "patch"], url_path="products")
     def products(self, request, pk=None):
         if not request.user or not request.user.is_staff:

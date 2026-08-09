@@ -2207,6 +2207,18 @@ class FilterOptionSerializer(serializers.ModelSerializer):
         attrs["name"] = cleaned_name
         attrs["slug"] = cleaned_slug
         return attrs
+
+    def create(self, validated_data):
+        if "display_order" not in validated_data:
+            filter_type = validated_data.get("filter_type")
+            last_order = (
+                FilterOption.objects.filter(filter_type=filter_type)
+                .order_by("-display_order")
+                .values_list("display_order", flat=True)
+                .first()
+            )
+            validated_data["display_order"] = int(last_order or 0) + 1
+        return super().create(validated_data)
     
     def get_product_count(self, obj):
         # This will be computed based on current category context
@@ -2228,9 +2240,8 @@ class FilterTypeSerializer(serializers.ModelSerializer):
             options.sort(
                 key=lambda option: (
                     0 if option.id in order_lookup else 1,
-                    order_lookup.get(option.id, option.display_order),
-                    option.display_order,
-                    option.name.lower(),
+                    order_lookup.get(option.id, option.id),
+                    option.id,
                 )
             )
         return FilterOptionSerializer(options, many=True, context=self.context).data
