@@ -3273,6 +3273,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         image_url_max = ProductImage._meta.get_field("url").max_length
         image_color_max = ProductImage._meta.get_field("color_name").max_length
         image_style_max = ProductImage._meta.get_field("style_name").max_length
+        image_size_max = ProductImage._meta.get_field("size_name").max_length
         image_alt_max = ProductImage._meta.get_field("alt_text").max_length
         video_url_max = ProductVideo._meta.get_field("url").max_length
         color_name_max = ProductColor._meta.get_field("name").max_length
@@ -3290,6 +3291,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             url = str((img or {}).get("url", "")).strip()
             color_name = str((img or {}).get("color_name", "")).strip()
             style_name = str((img or {}).get("style_name", "")).strip()
+            size_name = str((img or {}).get("size_name", "")).strip()
             alt_text = str((img or {}).get("alt_text", "")).strip()
             flip_horizontal = bool((img or {}).get("flip_horizontal", False))
             raw_sort_order = (img or {}).get("sort_order", 0)
@@ -3301,6 +3303,8 @@ class ProductViewSet(viewsets.ModelViewSet):
                 raise ValidationError({"images": [f"Image color name too long (max {image_color_max} chars)."]})
             if style_name and len(style_name) > image_style_max:
                 raise ValidationError({"images": [f"Image style name too long (max {image_style_max} chars)."]})
+            if size_name and len(size_name) > image_size_max:
+                raise ValidationError({"images": [f"Image size name too long (max {image_size_max} chars)."]})
             if alt_text and len(alt_text) > image_alt_max:
                 raise ValidationError({"images": [f"Image alt text too long (max {image_alt_max} chars)."]})
             try:
@@ -3312,6 +3316,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                     "url": url,
                     "color_name": color_name,
                     "style_name": style_name,
+                    "size_name": size_name,
                     "alt_text": alt_text,
                     "flip_horizontal": flip_horizontal,
                     "sort_order": sort_order,
