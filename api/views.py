@@ -957,7 +957,7 @@ def _build_google_feed_item_xml(
     Build a single product item XML for Google Merchant feed.
     If size is provided, generates a variant entry with item_group_id.
     """
-    product_link = urljoin(frontend_base_url, f"product/{product.slug}/")
+    product_link = urljoin(frontend_base_url, f"product/{product.slug}")
     product_image = _get_google_feed_variant_image_url(product, manual_variant, backend_base_url)
     if not product_image:
         return ""
@@ -2005,6 +2005,8 @@ class ProductViewSet(viewsets.ModelViewSet):
                 "stock_status",
                 "in_stock",
                 "primary_image_url",
+                "imported_from_product_id",
+                "imported_from_product__slug",
                 "live_rating",
                 "live_review_count",
             )
@@ -2043,11 +2045,13 @@ class ProductViewSet(viewsets.ModelViewSet):
             product_payload = {
                 key: value
                 for key, value in product.items()
-                if key not in ("live_rating", "live_review_count")
+                if key not in ("live_rating", "live_review_count", "imported_from_product__slug")
             }
+            canonical_slug = product.get("imported_from_product__slug") or product["slug"]
             data.append(
                 {
                     **product_payload,
+                    "canonical_slug": canonical_slug,
                     "price": str(product["price"]),
                     "delivery_charges": str(product["delivery_charges"]),
                     "rating": round(float(product["live_rating"] or 0), 1),
