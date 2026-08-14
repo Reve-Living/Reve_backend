@@ -495,6 +495,7 @@ class ProductAddon(models.Model):
     main_product = models.ForeignKey(Product, related_name="product_addons", on_delete=models.CASCADE)
     addon_product = models.ForeignKey(Product, related_name="addon_for_products", on_delete=models.CASCADE)
     addon_price = models.DecimalField(max_digits=10, decimal_places=2)
+    addon_quantity = models.PositiveIntegerField(default=1)
     is_active = models.BooleanField(default=True)
     sort_order = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)

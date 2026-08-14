@@ -644,7 +644,7 @@ class ProductAddonSerializer(serializers.ModelSerializer):
         model = ProductAddon
         fields = ("id", "main_product", "main_product_name", "addon_product", "addon_product_name",
                   "addon_product_slug", "addon_product_image", "addon_product_stock_status", "regular_price",
-                  "addon_price", "is_active", "sort_order", "created_at", "updated_at")
+                  "addon_price", "addon_quantity", "is_active", "sort_order", "created_at", "updated_at")
 
     def get_addon_product_image(self, obj):
         image = obj.addon_product.images.order_by("sort_order", "id").first()
@@ -658,6 +658,9 @@ class ProductAddonSerializer(serializers.ModelSerializer):
         price = attrs.get("addon_price", getattr(self.instance, "addon_price", None))
         if price is not None and price < 0:
             raise serializers.ValidationError({"addon_price": "Add-on price cannot be negative."})
+        quantity = attrs.get("addon_quantity", getattr(self.instance, "addon_quantity", 1))
+        if not isinstance(quantity, int) or quantity < 1:
+            raise serializers.ValidationError({"addon_quantity": "Add-on quantity must be at least 1."})
         return attrs
 
 
