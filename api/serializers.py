@@ -682,7 +682,7 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
     subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
     category_slug = serializers.ReadOnlyField(source="category.slug")
     subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
-    size_option_heading = serializers.ReadOnlyField(source="category.size_option_heading")
+    size_option_heading = serializers.SerializerMethodField()
     stock_status = serializers.CharField(read_only=True)
     imported_from_product = serializers.IntegerField(source="imported_from_product_id", read_only=True, allow_null=True)
     canonical_slug = serializers.CharField(source="imported_from_product.slug", read_only=True, allow_null=True)
@@ -696,6 +696,11 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
         if not request:
             return False
         return request.query_params.get(key) in ("1", "true", "True")
+
+    def get_size_option_heading(self, obj):
+        """A subcategory can override the parent category option heading."""
+        subcategory_heading = (getattr(obj.subcategory, "size_option_heading", "") or "").strip() if obj.subcategory_id else ""
+        return subcategory_heading or (getattr(obj.category, "size_option_heading", "") or "").strip()
 
     def get_fields(self):
         fields = super().get_fields()
@@ -1003,6 +1008,7 @@ class ProductQuickSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMi
     subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
     category_slug = serializers.ReadOnlyField(source="category.slug")
     subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
+    size_option_heading = serializers.SerializerMethodField()
     stock_status = serializers.CharField(read_only=True)
     rating = serializers.SerializerMethodField()
     review_count = serializers.SerializerMethodField()
@@ -1022,6 +1028,10 @@ class ProductQuickSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMi
             ],
             many=True,
         ).data
+
+    def get_size_option_heading(self, obj):
+        subcategory_heading = (getattr(obj.subcategory, "size_option_heading", "") or "").strip() if obj.subcategory_id else ""
+        return subcategory_heading or (getattr(obj.category, "size_option_heading", "") or "").strip()
 
     class Meta:
         model = Product
@@ -1070,6 +1080,7 @@ class ProductQuickSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMi
             "subcategory_name",
             "category_slug",
             "subcategory_slug",
+            "size_option_heading",
         )
 
 
