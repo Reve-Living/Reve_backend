@@ -682,6 +682,7 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
     subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
     category_slug = serializers.ReadOnlyField(source="category.slug")
     subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
+    size_option_heading = serializers.ReadOnlyField(source="category.size_option_heading")
     stock_status = serializers.CharField(read_only=True)
     imported_from_product = serializers.IntegerField(source="imported_from_product_id", read_only=True, allow_null=True)
     canonical_slug = serializers.CharField(source="imported_from_product.slug", read_only=True, allow_null=True)
@@ -785,6 +786,7 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
             "subcategory_name",
             "category_slug",
             "subcategory_slug",
+            "size_option_heading",
             "imported_from_product",
             "canonical_slug",
             "suggested_products",

@@ -32,6 +32,7 @@ class Category(models.Model):
     delivery_info_override_enabled = models.BooleanField(default=False)
     delivery_info = models.TextField(blank=True, default="")
     delivery_title = models.CharField(max_length=150, blank=True, default="")
+    size_option_heading = models.CharField(max_length=80, blank=True, default="")
 
     def __str__(self) -> str:
         return self.name
