@@ -2196,7 +2196,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         min_size_price_subquery = _min_size_price_subquery()
         size_count_subquery = _size_count_subquery()
         if is_admin_picker:
-            include_variants = request.query_params.get("include_variants") in ("1", "true", "True")
+            include_variants = self.request.query_params.get("include_variants") in ("1", "true", "True")
             picker_prefetches = []
             if include_variants:
                 picker_prefetches = [
