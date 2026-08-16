@@ -641,12 +641,13 @@ class ProductAddonSerializer(serializers.ModelSerializer):
     regular_price = serializers.SerializerMethodField()
     addon_product_stock_status = serializers.CharField(source="addon_product.stock_status", read_only=True)
     addon_product_image = serializers.SerializerMethodField()
+    addon_color_names = serializers.ListField(child=serializers.CharField(max_length=120), required=False)
 
     class Meta:
         model = ProductAddon
         fields = ("id", "main_product", "main_product_name", "addon_product", "addon_product_name",
                   "addon_product_slug", "addon_product_image", "addon_product_stock_status", "regular_price",
-                  "addon_size_name", "addon_price", "addon_quantity", "is_active", "sort_order", "created_at", "updated_at")
+                  "addon_size_name", "addon_color_name", "addon_color_names", "addon_price", "addon_quantity", "is_active", "sort_order", "created_at", "updated_at")
 
     def get_regular_price(self, obj):
         if obj.addon_size_name:
@@ -654,6 +655,14 @@ class ProductAddonSerializer(serializers.ModelSerializer):
             if matched_size is not None:
                 return matched_size.price_delta
         return obj.addon_product.price
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if not data.get("addon_color_names") and instance.addon_color_name:
+            data["addon_color_names"] = [
+                name.strip() for name in instance.addon_color_name.split("|") if name.strip()
+            ]
+        return data
 
     def get_addon_product_image(self, obj):
         images = obj.addon_product.images.all()
@@ -679,6 +688,27 @@ class ProductAddonSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"addon_size_name": "Choose a valid variation from the selected add-on product."})
             attrs["addon_size_name"] = matched_size.name
             attrs["addon_price"] = matched_size.price_delta
+        stored_color_names = getattr(self.instance, "addon_color_names", []) if self.instance else []
+        raw_color_names = attrs.get("addon_color_names", stored_color_names)
+        if not isinstance(raw_color_names, list):
+            raw_color_names = []
+        if not raw_color_names and attrs.get("addon_color_name"):
+            raw_color_names = [attrs["addon_color_name"]]
+        addon_color_names = list(dict.fromkeys(str(name or "").strip() for name in raw_color_names if str(name or "").strip()))
+        if addon_color_names:
+            is_dining_main_product = bool(main and re.search(r"\bdining\b", f"{main.category.name} {main.category.slug}", re.I))
+            if not is_dining_main_product:
+                raise serializers.ValidationError({"addon_color_name": "Add-on colours are available for Dining products only."})
+            colors_by_name = {color.name.strip().lower(): color.name for color in addon.colors.all()} if addon else {}
+            matched_color_names = [colors_by_name.get(name.lower()) for name in addon_color_names]
+            if any(name is None for name in matched_color_names):
+                raise serializers.ValidationError({"addon_color_names": "Choose valid colours from the selected add-on product."})
+            attrs["addon_color_names"] = matched_color_names
+            # Keep the existing field populated for compatibility and uniqueness.
+            attrs["addon_color_name"] = " | ".join(matched_color_names)
+        else:
+            attrs["addon_color_names"] = []
+            attrs["addon_color_name"] = ""
         price = attrs.get("addon_price", getattr(self.instance, "addon_price", None))
         if price is not None and price < 0:
             raise serializers.ValidationError({"addon_price": "Add-on price cannot be negative."})
@@ -1395,6 +1425,7 @@ class ProductAdminPickerSerializer(serializers.ModelSerializer):
     category_slug = serializers.ReadOnlyField(source="category.slug")
     subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
     sizes = ProductSizeSerializer(many=True, read_only=True)
+    colors = ProductColorSerializer(many=True, read_only=True)
 
     class Meta:
         model = Product
@@ -1409,6 +1440,7 @@ class ProductAdminPickerSerializer(serializers.ModelSerializer):
             "category_slug",
             "subcategory_slug",
             "sizes",
+            "colors",
         ]
 
 

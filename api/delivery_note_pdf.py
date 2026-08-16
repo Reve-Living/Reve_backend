@@ -229,6 +229,11 @@ def _order_item_summary(order: Order) -> str:
             _append_unique(parts, seen, f"Size: {item.size}")
         if item.color:
             _append_unique(parts, seen, f"Colour: {item.color}")
+        for name, value in (item.selected_variants or {}).items():
+            label = str(name or "").strip()
+            selected_value = str(value or "").strip()
+            if label and selected_value:
+                _append_unique(parts, seen, f"{label}: {selected_value}")
         for style_part in _normalized_style_parts(item.style):
             _append_unique(parts, seen, style_part)
         if item.extras_total:

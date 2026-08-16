@@ -1856,7 +1856,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         queryset=(
             ProductAddon.objects.filter(is_active=True, addon_product__is_hidden=False)
             .select_related("addon_product", "addon_product__category")
-            .prefetch_related("addon_product__images", "addon_product__sizes")
+            .prefetch_related("addon_product__images", "addon_product__sizes", "addon_product__colors")
             .order_by("sort_order", "id")
         ),
         to_attr="prefetched_product_addons",
@@ -2202,7 +2202,11 @@ class ProductViewSet(viewsets.ModelViewSet):
                     Prefetch(
                         "sizes",
                         queryset=ProductSize.objects.only("id", "product_id", "name", "description", "price_delta", "stock_status").order_by("id"),
-                    )
+                    ),
+                    Prefetch(
+                        "colors",
+                        queryset=ProductColor.objects.only("id", "product_id", "name", "hex_code", "is_available", "stock_status").order_by("id"),
+                    ),
                 )
                 .only(
                     *self._admin_picker_only_fields,
@@ -3794,7 +3798,7 @@ class ProductMattressAdminViewSet(viewsets.ModelViewSet):
 
 
 class ProductAddonViewSet(viewsets.ModelViewSet):
-    queryset = ProductAddon.objects.select_related("main_product", "main_product__category", "addon_product").prefetch_related("addon_product__images", "addon_product__sizes")
+    queryset = ProductAddon.objects.select_related("main_product", "main_product__category", "addon_product").prefetch_related("addon_product__images", "addon_product__sizes", "addon_product__colors")
     serializer_class = ProductAddonSerializer
     permission_classes = [IsAdminUser]
     http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
