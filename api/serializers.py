@@ -738,7 +738,6 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
                 "filters",
                 "videos",
                 "mattresses",
-                "product_addons",
                 "computed_dimensions",
                 "dimension_template",
                 "dimension_template_name",
@@ -846,9 +845,11 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
         return ProductSummarySerializer(queryset, many=True).data
 
     def get_product_addons(self, obj):
-        links = obj.product_addons.filter(
-            is_active=True, addon_product__is_hidden=False
-        ).select_related("addon_product", "addon_product__category").prefetch_related("addon_product__images", "addon_product__sizes")
+        links = getattr(obj, "prefetched_product_addons", None)
+        if links is None:
+            links = obj.product_addons.filter(
+                is_active=True, addon_product__is_hidden=False
+            ).select_related("addon_product", "addon_product__category").prefetch_related("addon_product__images", "addon_product__sizes")
         return ProductAddonSerializer(links, many=True).data
 
     def get_mattresses(self, obj):

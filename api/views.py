@@ -1851,18 +1851,30 @@ class ProductViewSet(viewsets.ModelViewSet):
     _summary_filter_prefetches = [_filter_values_list_prefetch]
     _summary_variant_prefetches = [_summary_color_prefetch, _summary_style_prefetch]
     _list_prefetches = [_size_list_prefetch, _filter_values_list_prefetch]
+    _product_addons_prefetch = Prefetch(
+        "product_addons",
+        queryset=(
+            ProductAddon.objects.filter(is_active=True, addon_product__is_hidden=False)
+            .select_related("addon_product", "addon_product__category")
+            .prefetch_related("addon_product__images", "addon_product__sizes")
+            .order_by("sort_order", "id")
+        ),
+        to_attr="prefetched_product_addons",
+    )
     _core_detail_prefetches = [
         "images",
         _size_list_prefetch,
         "colors",
         "styles",
         "fabrics",
+        _product_addons_prefetch,
     ]
     _detail_prefetches = ["images"] + _list_prefetches + [
         "videos",
         "colors",
         "styles",
         "fabrics",
+        _product_addons_prefetch,
         "mattresses",
         "dimension_template_link__template__rows",
         Prefetch(
@@ -2683,7 +2695,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             return super().retrieve(request, *args, **kwargs)
 
         response_kind = "quick" if self._is_quick_detail_request() else "core" if self._is_core_detail_request() else "full"
-        cache_key = f"product-detail:v8:{response_kind}:{kwargs.get(self.lookup_field or 'pk')}"
+        cache_key = f"product-detail:v9:{response_kind}:{kwargs.get(self.lookup_field or 'pk')}"
         cached_data = cache.get(cache_key)
         if cached_data is not None:
             return Response(cached_data)
