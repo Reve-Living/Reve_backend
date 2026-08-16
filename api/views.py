@@ -2196,9 +2196,10 @@ class ProductViewSet(viewsets.ModelViewSet):
         min_size_price_subquery = _min_size_price_subquery()
         size_count_subquery = _size_count_subquery()
         if is_admin_picker:
-            queryset = (
-                Product.objects.select_related("category", "subcategory")
-                .prefetch_related(
+            include_variants = request.query_params.get("include_variants") in ("1", "true", "True")
+            picker_prefetches = []
+            if include_variants:
+                picker_prefetches = [
                     Prefetch(
                         "sizes",
                         queryset=ProductSize.objects.only("id", "product_id", "name", "description", "price_delta", "stock_status").order_by("id"),
@@ -2207,7 +2208,10 @@ class ProductViewSet(viewsets.ModelViewSet):
                         "colors",
                         queryset=ProductColor.objects.only("id", "product_id", "name", "hex_code", "is_available", "stock_status").order_by("id"),
                     ),
-                )
+                ]
+            queryset = (
+                Product.objects.select_related("category", "subcategory")
+                .prefetch_related(*picker_prefetches)
                 .only(
                     *self._admin_picker_only_fields,
                     "category__name",

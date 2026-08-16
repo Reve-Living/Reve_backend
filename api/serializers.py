@@ -1427,6 +1427,18 @@ class ProductAdminPickerSerializer(serializers.ModelSerializer):
     sizes = ProductSizeSerializer(many=True, read_only=True)
     colors = ProductColorSerializer(many=True, read_only=True)
 
+    def get_fields(self):
+        """Keep the shared admin product picker small unless variants are needed."""
+        fields = super().get_fields()
+        request = self.context.get("request")
+        include_variants = bool(
+            request and request.query_params.get("include_variants") in ("1", "true", "True")
+        )
+        if not include_variants:
+            fields.pop("sizes", None)
+            fields.pop("colors", None)
+        return fields
+
     class Meta:
         model = Product
         fields = [
