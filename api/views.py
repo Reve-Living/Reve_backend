@@ -2188,6 +2188,12 @@ class ProductViewSet(viewsets.ModelViewSet):
         if is_admin_picker:
             queryset = (
                 Product.objects.select_related("category", "subcategory")
+                .prefetch_related(
+                    Prefetch(
+                        "sizes",
+                        queryset=ProductSize.objects.only("id", "product_id", "name", "description", "price_delta", "stock_status").order_by("id"),
+                    )
+                )
                 .only(
                     *self._admin_picker_only_fields,
                     "category__name",
@@ -3778,7 +3784,7 @@ class ProductMattressAdminViewSet(viewsets.ModelViewSet):
 
 
 class ProductAddonViewSet(viewsets.ModelViewSet):
-    queryset = ProductAddon.objects.select_related("main_product", "addon_product").prefetch_related("addon_product__images")
+    queryset = ProductAddon.objects.select_related("main_product", "main_product__category", "addon_product").prefetch_related("addon_product__images", "addon_product__sizes")
     serializer_class = ProductAddonSerializer
     permission_classes = [IsAdminUser]
     http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]

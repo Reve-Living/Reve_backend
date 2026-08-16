@@ -1,3 +1,4 @@
+import re
 from urllib.parse import urlparse
 
 from django.conf import settings
@@ -636,7 +637,7 @@ class ProductAddonSerializer(serializers.ModelSerializer):
     main_product_name = serializers.CharField(source="main_product.name", read_only=True)
     addon_product_name = serializers.CharField(source="addon_product.name", read_only=True)
     addon_product_slug = serializers.CharField(source="addon_product.slug", read_only=True)
-    regular_price = serializers.DecimalField(source="addon_product.price", max_digits=10, decimal_places=2, read_only=True)
+    regular_price = serializers.SerializerMethodField()
     addon_product_stock_status = serializers.CharField(source="addon_product.stock_status", read_only=True)
     addon_product_image = serializers.SerializerMethodField()
 
@@ -644,10 +645,22 @@ class ProductAddonSerializer(serializers.ModelSerializer):
         model = ProductAddon
         fields = ("id", "main_product", "main_product_name", "addon_product", "addon_product_name",
                   "addon_product_slug", "addon_product_image", "addon_product_stock_status", "regular_price",
-                  "addon_price", "addon_quantity", "is_active", "sort_order", "created_at", "updated_at")
+                  "addon_size_name", "addon_price", "addon_quantity", "is_active", "sort_order", "created_at", "updated_at")
+
+    def get_regular_price(self, obj):
+        if obj.addon_size_name:
+            matched_size = next((size for size in obj.addon_product.sizes.all() if size.name.strip().lower() == obj.addon_size_name.strip().lower()), None)
+            if matched_size is not None:
+                return matched_size.price_delta
+        return obj.addon_product.price
 
     def get_addon_product_image(self, obj):
-        image = obj.addon_product.images.order_by("sort_order", "id").first()
+        images = obj.addon_product.images.all()
+        if obj.addon_size_name:
+            image = next((item for item in images if item.size_name.strip().lower() == obj.addon_size_name.strip().lower()), None)
+            if image is not None:
+                return image.url
+        image = next(iter(images), None)
         return image.url if image else ""
 
     def validate(self, attrs):
@@ -655,6 +668,16 @@ class ProductAddonSerializer(serializers.ModelSerializer):
         addon = attrs.get("addon_product", getattr(self.instance, "addon_product", None))
         if main and addon and main.pk == addon.pk:
             raise serializers.ValidationError("A product cannot be its own add-on.")
+        addon_size_name = str(attrs.get("addon_size_name", getattr(self.instance, "addon_size_name", "")) or "").strip()
+        if addon_size_name:
+            is_dining_main_product = bool(main and re.search(r"\bdining\b", f"{main.category.name} {main.category.slug}", re.I))
+            if not is_dining_main_product:
+                raise serializers.ValidationError({"addon_size_name": "Specific add-on variations are available for Dining products only."})
+            matched_size = next((size for size in addon.sizes.all() if size.name.strip().lower() == addon_size_name.lower()), None) if addon else None
+            if matched_size is None:
+                raise serializers.ValidationError({"addon_size_name": "Choose a valid variation from the selected add-on product."})
+            attrs["addon_size_name"] = matched_size.name
+            attrs["addon_price"] = matched_size.price_delta
         price = attrs.get("addon_price", getattr(self.instance, "addon_price", None))
         if price is not None and price < 0:
             raise serializers.ValidationError({"addon_price": "Add-on price cannot be negative."})
@@ -812,7 +835,7 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
     def get_product_addons(self, obj):
         links = obj.product_addons.filter(
             is_active=True, addon_product__is_hidden=False
-        ).select_related("addon_product", "addon_product__category").prefetch_related("addon_product__images")
+        ).select_related("addon_product", "addon_product__category").prefetch_related("addon_product__images", "addon_product__sizes")
         return ProductAddonSerializer(links, many=True).data
 
     def get_mattresses(self, obj):
@@ -1342,6 +1365,7 @@ class ProductAdminPickerSerializer(serializers.ModelSerializer):
     subcategory_name = serializers.ReadOnlyField(source="subcategory.name")
     category_slug = serializers.ReadOnlyField(source="category.slug")
     subcategory_slug = serializers.ReadOnlyField(source="subcategory.slug")
+    sizes = ProductSizeSerializer(many=True, read_only=True)
 
     class Meta:
         model = Product
@@ -1355,6 +1379,7 @@ class ProductAdminPickerSerializer(serializers.ModelSerializer):
             "subcategory_name",
             "category_slug",
             "subcategory_slug",
+            "sizes",
         ]
 
 
