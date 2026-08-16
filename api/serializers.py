@@ -5,6 +5,7 @@ from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.db import transaction
+from django.db.models import Q
 from django.db.models import Q, Case, When, Value, IntegerField
 from django.utils.text import slugify
 from rest_framework import serializers
@@ -728,10 +729,22 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
     def get_fields(self):
         fields = super().get_fields()
         if self._query_flag("core"):
-            fields.pop("suggested_products", None)
-            fields.pop("suggested_products_data", None)
-            fields.pop("filters", None)
-            fields.pop("videos", None)
+            # Keep the first product-page paint limited to product content and
+            # selectable variants. These fields build large related payloads
+            # and are loaded by the already-parallel full response instead.
+            for field_name in (
+                "suggested_products",
+                "suggested_products_data",
+                "filters",
+                "videos",
+                "mattresses",
+                "product_addons",
+                "computed_dimensions",
+                "dimension_template",
+                "dimension_template_name",
+                "wingback_width_delta_cm",
+            ):
+                fields.pop(field_name, None)
         return fields
 
     class Meta:
@@ -846,27 +859,42 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
         request = self.context.get("request")
         is_admin_request = bool(request and request.user and request.user.is_authenticated and request.user.is_staff)
         cache_key = (
-            f"mattress-options:product-detail:v8:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
+            f"mattress-options:product-detail:v9:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
         )
         base_items = cache.get(cache_key)
         if base_items is None:
-            library_cache_key = "mattress-options:active-library:v2"
-            serialized_items = cache.get(library_cache_key)
-            if serialized_items is None:
-                options = (
-                    MattressOption.objects.filter(is_active=True)
-                    .prefetch_related("prices", "categories", "subcategories", "products")
-                    .annotate(
-                        sort_priority=Case(
-                            When(sort_order__gt=0, then=Value(0)),
-                            default=Value(1),
-                            output_field=IntegerField(),
-                        )
+            is_kids_beds_product = (
+                str(getattr(obj.category, "slug", "") or "").strip().lower() == "kids-beds"
+                or str(getattr(obj.category, "name", "") or "").strip().casefold() == "kids beds"
+            )
+            if is_kids_beds_product:
+                # Preserve the existing legacy-copy matching rules for Kids Beds.
+                options = MattressOption.objects.filter(is_active=True)
+            else:
+                # Most product pages only need globally available mattresses,
+                # their own category/subcategory, or an explicitly linked item.
+                # Avoid serializing the complete mattress catalogue first.
+                scope = Q(categories__isnull=True, subcategories__isnull=True) | Q(products__id=obj.id)
+                if obj.subcategory_id:
+                    scope |= Q(subcategories__id=obj.subcategory_id)
+                    if obj.category_id:
+                        scope |= Q(subcategories__isnull=True, categories__id=obj.category_id)
+                elif obj.category_id:
+                    scope |= Q(subcategories__isnull=True, categories__id=obj.category_id)
+                options = MattressOption.objects.filter(is_active=True).filter(scope).distinct()
+
+            options = (
+                options.prefetch_related("prices", "categories", "subcategories", "products")
+                .annotate(
+                    sort_priority=Case(
+                        When(sort_order__gt=0, then=Value(0)),
+                        default=Value(1),
+                        output_field=IntegerField(),
                     )
-                    .order_by("sort_priority", "sort_order", "name")
                 )
-                serialized_items = list(MattressOptionSerializer(options, many=True).data)
-                cache.set(library_cache_key, serialized_items, 60 * 5)
+                .order_by("sort_priority", "sort_order", "name")
+            )
+            serialized_items = list(MattressOptionSerializer(options, many=True).data)
             base_items = [
                 item
                 for item in serialized_items

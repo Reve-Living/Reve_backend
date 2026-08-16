@@ -1857,8 +1857,6 @@ class ProductViewSet(viewsets.ModelViewSet):
         "colors",
         "styles",
         "fabrics",
-        "mattresses",
-        "dimension_template_link__template__rows",
     ]
     _detail_prefetches = ["images"] + _list_prefetches + [
         "videos",
@@ -2685,7 +2683,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             return super().retrieve(request, *args, **kwargs)
 
         response_kind = "quick" if self._is_quick_detail_request() else "core" if self._is_core_detail_request() else "full"
-        cache_key = f"product-detail:v6:{response_kind}:{kwargs.get(self.lookup_field or 'pk')}"
+        cache_key = f"product-detail:v8:{response_kind}:{kwargs.get(self.lookup_field or 'pk')}"
         cached_data = cache.get(cache_key)
         if cached_data is not None:
             return Response(cached_data)
