@@ -889,33 +889,14 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
         """
         request = self.context.get("request")
         is_admin_request = bool(request and request.user and request.user.is_authenticated and request.user.is_staff)
-        cache_key = (
-            f"mattress-options:product-detail:v9:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
+        is_kids_beds_product = (
+            str(getattr(obj.category, "slug", "") or "").strip().lower() == "kids-beds"
+            or str(getattr(obj.category, "name", "") or "").strip().casefold() == "kids beds"
         )
-        base_items = cache.get(cache_key)
-        if base_items is None:
-            is_kids_beds_product = (
-                str(getattr(obj.category, "slug", "") or "").strip().lower() == "kids-beds"
-                or str(getattr(obj.category, "name", "") or "").strip().casefold() == "kids beds"
-            )
-            if is_kids_beds_product:
-                # Preserve the existing legacy-copy matching rules for Kids Beds.
-                options = MattressOption.objects.filter(is_active=True)
-            else:
-                # Most product pages only need globally available mattresses,
-                # their own category/subcategory, or an explicitly linked item.
-                # Avoid serializing the complete mattress catalogue first.
-                scope = Q(categories__isnull=True, subcategories__isnull=True) | Q(products__id=obj.id)
-                if obj.subcategory_id:
-                    scope |= Q(subcategories__id=obj.subcategory_id)
-                    if obj.category_id:
-                        scope |= Q(subcategories__isnull=True, categories__id=obj.category_id)
-                elif obj.category_id:
-                    scope |= Q(subcategories__isnull=True, categories__id=obj.category_id)
-                options = MattressOption.objects.filter(is_active=True).filter(scope).distinct()
 
-            options = (
-                options.prefetch_related("prices", "categories", "subcategories", "products")
+        def serialize_options(queryset):
+            ordered = (
+                queryset.prefetch_related("prices", "categories", "subcategories", "products")
                 .annotate(
                     sort_priority=Case(
                         When(sort_order__gt=0, then=Value(0)),
@@ -925,13 +906,62 @@ class ProductSerializer(ProductDiscountDisplayMixin, ProductReviewSummaryMixin, 
                 )
                 .order_by("sort_priority", "sort_order", "name")
             )
-            serialized_items = list(MattressOptionSerializer(options, many=True).data)
-            base_items = [
+            return list(MattressOptionSerializer(ordered, many=True).data)
+
+        if is_kids_beds_product:
+            # Preserve the existing legacy-copy matching rules for Kids Beds.
+            cache_key = f"mattress-options:product-detail:v10:kids:{obj.id}:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
+            base_items = cache.get(cache_key)
+            if base_items is None:
+                base_items = [
+                    item
+                    for item in serialize_options(MattressOption.objects.filter(is_active=True))
+                    if _mattress_option_matches_product_scope(item, obj)
+                ]
+                cache.set(cache_key, base_items, 60 * 5)
+        else:
+            # Category-scoped mattresses are the same for every product in a
+            # category/subcategory. Cache that shared work once, then add this
+            # product's explicitly targeted mattresses separately.
+            cache_key = f"mattress-options:product-detail:v10:scope:{obj.category_id or 'none'}:{obj.subcategory_id or 'none'}"
+            base_items = cache.get(cache_key)
+            if base_items is None:
+                scope = Q(categories__isnull=True, subcategories__isnull=True)
+                if obj.subcategory_id:
+                    scope |= Q(subcategories__id=obj.subcategory_id)
+                    if obj.category_id:
+                        scope |= Q(subcategories__isnull=True, categories__id=obj.category_id)
+                elif obj.category_id:
+                    scope |= Q(subcategories__isnull=True, categories__id=obj.category_id)
+                shared_options = MattressOption.objects.filter(
+                    is_active=True,
+                    products__isnull=True,
+                ).filter(scope).distinct()
+                base_items = [
+                    item
+                    for item in serialize_options(shared_options)
+                    if _mattress_option_matches_product_scope(item, obj)
+                ]
+                cache.set(cache_key, base_items, 60 * 5)
+
+            targeted_items = [
                 item
-                for item in serialized_items
+                for item in serialize_options(
+                    MattressOption.objects.filter(is_active=True, products__id=obj.id).distinct()
+                )
                 if _mattress_option_matches_product_scope(item, obj)
             ]
-            cache.set(cache_key, base_items, 60 * 5)
+            if targeted_items:
+                by_id = {int(item["id"]): item for item in base_items}
+                by_id.update({int(item["id"]): item for item in targeted_items})
+                base_items = sorted(
+                    by_id.values(),
+                    key=lambda item: (
+                        0 if int(item.get("sort_order") or 0) > 0 else 1,
+                        int(item.get("sort_order") or 0),
+                        str(item.get("name") or "").casefold(),
+                    ),
+                )
         overrides = getattr(obj, "mattresses", None)
         override_items = list(overrides.all()) if overrides is not None else []
         override_lookup = {
