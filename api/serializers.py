@@ -687,7 +687,12 @@ class ProductAddonSerializer(serializers.ModelSerializer):
             if matched_size is None:
                 raise serializers.ValidationError({"addon_size_name": "Choose a valid variation from the selected add-on product."})
             attrs["addon_size_name"] = matched_size.name
-            attrs["addon_price"] = matched_size.price_delta
+            # A selected variation supplies the default price only.  If the
+            # admin enters a special add-on price, keep that discounted price
+            # instead of silently replacing it with the variation's normal
+            # price while saving.
+            if "addon_price" not in attrs:
+                attrs["addon_price"] = matched_size.price_delta
         stored_color_names = getattr(self.instance, "addon_color_names", []) if self.instance else []
         raw_color_names = attrs.get("addon_color_names", stored_color_names)
         if not isinstance(raw_color_names, list):
