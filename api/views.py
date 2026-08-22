@@ -596,8 +596,12 @@ def _get_google_feed_variant_price(variant: dict | None) -> Decimal | None:
     raw_price = _get_google_feed_variant_value(variant, "price")
     if not raw_price:
         return None
+    # Tolerate values pasted with currency symbols/thousands separators, e.g. "£1,229.00".
+    cleaned_price = re.sub(r"[^0-9.\-]", "", raw_price)
+    if not cleaned_price:
+        return None
     try:
-        price = Decimal(raw_price)
+        price = Decimal(cleaned_price)
     except (InvalidOperation, TypeError, ValueError):
         return None
     if price <= 0:
@@ -967,6 +971,10 @@ def _build_google_feed_item_xml(
     
     # ProductSize.price_delta stores the actual size price used by the storefront.
     variant_price = _get_google_feed_variant_price(manual_variant)
+    if manual_variant and price_override is None and variant_price is None:
+        # This variant has no valid price of its own - skip it rather than silently
+        # falling back to the product's base price, which would misprice this size/colour.
+        return ""
     price = Decimal(price_override) if price_override is not None else (variant_price if variant_price is not None else Decimal(product.price))
     if price_override is None and size and hasattr(size, "price_delta") and size.price_delta:
         price = Decimal(size.price_delta)
