@@ -1260,7 +1260,14 @@ def google_feed_xml(request):
         yield "  </channel>\n"
         yield "</rss>\n"
 
-    return StreamingHttpResponse(_xml_stream(), content_type="application/xml; charset=utf-8")
+    response = StreamingHttpResponse(_xml_stream(), content_type="application/xml; charset=utf-8")
+    # The feed is generated from the current catalogue on every request. Prevent
+    # browsers, CDNs, and Merchant Center fetches from receiving a stale copy
+    # after products/categories are hidden or removed.
+    response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    return response
 
 
 class HealthCheckView(APIView):
