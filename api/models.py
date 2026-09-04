@@ -103,7 +103,7 @@ class Collection(models.Model):
 
 
 class HeroSlide(models.Model):
-    title = models.CharField(max_length=255)
+    title = models.CharField(max_length=255, blank=True, default="")
     subtitle = models.CharField(max_length=500, blank=True, default="")
     category = models.ForeignKey(
         Category, related_name="hero_slides", on_delete=models.SET_NULL, null=True, blank=True
