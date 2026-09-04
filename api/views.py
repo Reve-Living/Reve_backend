@@ -2448,7 +2448,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         return queryset
 
     def _product_list_cache_key(self, params):
-        return f"product-list:v9:{urlencode(sorted(params.items()), doseq=True)}"
+        return f"product-list:v10:{urlencode(sorted(params.items()), doseq=True)}"
 
     def _summary_queryset_for_cache(self):
         primary_image_subquery = _primary_image_subquery()
@@ -2703,7 +2703,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             return log_query_count(super().list(request, *args, **kwargs))
 
         query_string = urlencode(sorted(request.query_params.lists()), doseq=True)
-        cache_key = f"product-list:v9:{query_string}"
+        cache_key = f"product-list:v10:{query_string}"
         cached_data = cache.get(cache_key)
         if cached_data is not None:
             return log_query_count(Response(cached_data))
