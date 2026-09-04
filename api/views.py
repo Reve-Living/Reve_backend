@@ -2560,6 +2560,18 @@ class ProductViewSet(viewsets.ModelViewSet):
         if product is not None:
             self._schedule_product_cache_prewarm(getattr(product, "pk", None))
 
+    def perform_destroy(self, instance):
+        """Remove only this deleted product's collection links, then refresh cached collections."""
+        # Django removes many-to-many rows during deletion, but clearing the
+        # relation explicitly keeps the intent clear and ensures collection
+        # data cannot retain an orphaned product link in any database backend.
+        instance.collections.clear()
+        instance.delete()
+        # Collection responses are cached separately from product lists.  A
+        # product delete must clear both so the next storefront request never
+        # receives a collection containing the removed product.
+        cache.clear()
+
     def list(self, request, *args, **kwargs):
         """
         Cache anonymous storefront product lists briefly. Admin mutations clear
